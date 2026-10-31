@@ -79,7 +79,8 @@ npm run dev              # http://localhost:3000
 - `src/patients/service.ts`: cadastro, busca, edição, arquivar/restaurar, consentimento LGPD e aplicação dos limites. O limite é lido ao vivo do plano e do banco (não dos contadores diários), com trava por tenant (`pg_advisory_xact_lock`) para cadastros simultâneos.
 - Quando o limite é atingido só novos cadastros (e restaurações) são bloqueados. Leitura, edição, exportação e exclusão continuam.
 - Avisos aos 80% e 100%: `Notice` na plataforma (`/api/notices`, só titular) e e-mail, uma vez por cruzamento; rearmam ao voltar abaixo do limite.
-- Telas: `/pacientes`, `/pacientes/novo`, `/pacientes/[id]`.
+- Importação em `/pacientes/importar`: CSV com prévia e validação por linha, limite de 200 pacientes/1 MB, confirmação explícita de CPFs duplicados e gravação atômica. Importar não presume consentimento LGPD.
+- Telas: `/pacientes`, `/pacientes/novo`, `/pacientes/[id]`, `/pacientes/importar`.
 - Aplicar: `npx prisma migrate dev --name patients && npm run db:rls && npm test`.
 
 ## Agenda e lembretes (Fase 1: US-AGE-01 a 03 e 06)
@@ -88,3 +89,10 @@ npm run dev              # http://localhost:3000
 - `src/agenda/reminders.ts`: job de lembretes por e-mail. Um lembrete por consulta e horário; reagendar ou cancelar cancela o pendente; sem e-mail ou com opt-out, o lembrete já nasce "pulado" e a agenda mostra o motivo; falhas têm até 3 tentativas com espera crescente; execuções simultâneas não duplicam.
 - Rotinas: `POST /api/jobs/reminders` (a cada poucos minutos) e `POST /api/jobs/daily` (uma vez por dia), autenticadas por `JOB_SECRET` no cabeçalho `x-job-secret`.
 - Telas: `/agenda`, `/agenda/novo`. Aplicar: `npx prisma migrate dev --name agenda && npm run db:rls && npm test`.
+
+## Financeiro, marca e gestão da conta
+- `/financeiro`: cobranças por paciente/consulta, forma e situação de pagamento, registro do recebimento e resumo mensal de valores recebidos e pendentes. Acesso restrito a titular e profissional.
+- `/marca`: configura a URL HTTPS pública do logotipo usado na impressão dos planos alimentares.
+- `/painel`: indicadores do titular sobre conta/plano, pacientes, próximas consultas e resumo financeiro do mês.
+- Gestão exclusiva do titular: `/equipe` (membros e convites), `/assinatura` (plano e checkout) e `/configuracoes/agenda` (fuso, duração padrão e antecedência dos lembretes).
+- `npm run db:setup` aplica migrations pendentes e reaplica permissões/RLS, inclusive as permissões clínicas, de receitas e do financeiro.

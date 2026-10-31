@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient, type Module } from '@prisma/client';
 import { hashToken } from '../auth/password';
+import type { SessionInfo } from '../auth/service';
 import type { Mailer } from '../auth/mailer';
 import type { Gateway } from './gateway';
 import { accessMode, canAddPatient, type AccessMode } from './limits';
@@ -229,6 +230,45 @@ export function createBillingService({ db, mailer, gateway, now = () => new Date
     return { mode, patientsTotal, patientLimit, planCode: sub?.plan.code ?? null, canAddPatient: canAddPatient(mode, patientsTotal, patientLimit) };
   }
 
+  async function loadDashboardState(session: SessionInfo) {
+    if (session.role !== 'TITULAR') return { ok: false as const, reason: 'forbidden' as const };
+    const account = await db.account.findUnique({
+      where: { id: session.accountId },
+      select: { status: true, trialEndsAt: true },
+    });
+    if (!account) return { ok: false as const, reason: 'not_found' as const };
+    const sub = await db.subscription.findUnique({
+      where: { accountId: session.accountId },
+      include: { plan: { select: { code: true, name: true, patientLimit: true, activePatientDays: true } } },
+    });
+    return {
+      ok: true as const,
+      accountStatus: account.status,
+      trialEndsAt: account.trialEndsAt,
+      graceEndsAt: sub?.graceEndsAt ?? null,
+      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      mode: accessMode(
+        { accountStatus: account.status, trialEndsAt: account.trialEndsAt, graceEndsAt: sub?.graceEndsAt ?? null },
+        now(),
+      ),
+      plan: sub?.plan ?? null,
+    };
+  }
+
+  async function loadSubscription(accountId: string) {
+    const sub = await db.subscription.findUnique({ where: { accountId }, include: { plan: true } });
+    if (!sub) return null;
+    const pendingPlan = sub.pendingPlanId ? await db.plan.findUnique({ where: { id: sub.pendingPlanId }, select: { code: true, name: true } }) : null;
+    return {
+      status: sub.status,
+      currentPeriodEnd: sub.currentPeriodEnd,
+      graceEndsAt: sub.graceEndsAt,
+      priceCents: sub.priceCents,
+      plan: { code: sub.plan.code, name: sub.plan.name, patientLimit: sub.plan.patientLimit, userLimit: sub.plan.userLimit },
+      pendingPlan,
+    };
+  }
+
   /** Job diário: avisa uma única vez quando a carência termina (idempotente por evento). */
   async function runBillingJob(): Promise<{ graceEndedNotices: number }> {
     const due = await db.subscription.findMany({
@@ -257,5 +297,5 @@ export function createBillingService({ db, mailer, gateway, now = () => new Date
     return { graceEndedNotices: sent };
   }
 
-  return { createPlan, updatePlan, deactivatePlan, listOfferedPlans, startCheckout, handleWebhook, changePlan, loadAccessState, runBillingJob };
+  return { createPlan, updatePlan, deactivatePlan, listOfferedPlans, startCheckout, handleWebhook, changePlan, loadAccessState, loadDashboardState, loadSubscription, runBillingJob };
 }

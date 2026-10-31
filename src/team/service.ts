@@ -36,6 +36,27 @@ interface Deps {
 export function createTeamService({ db, mailer, now = () => new Date(), config = TEAM_CONFIG }: Deps) {
   const tenant = (s: SessionInfo) => forTenant(s.accountId, s.userId, db);
 
+  async function list(s: SessionInfo) {
+    if (s.role !== 'TITULAR') return { ok: false as const, reason: 'forbidden' as const };
+    const t = tenant(s);
+    const [members, invitations] = await Promise.all([
+      t.membership.findMany({
+        include: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      t.invitation.findMany({
+        where: { acceptedAt: null, revokedAt: null, expiresAt: { gt: now() } },
+        select: { id: true, email: true, role: true, createdAt: true, expiresAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    return {
+      ok: true as const,
+      members: members.map((m) => ({ id: m.user.id, name: m.user.name, email: m.user.email, role: m.role, createdAt: m.createdAt })),
+      invitations,
+    };
+  }
+
   async function invite(s: SessionInfo, emailRaw: string, role: InvitableRole, sourceIp = 'unknown'): Promise<InviteResult> {
     if (s.role !== 'TITULAR') return { ok: false, reason: 'forbidden' };
     if (role !== 'PROFISSIONAL' && role !== 'SECRETARIA') return { ok: false, reason: 'invalid_role' };
@@ -178,5 +199,5 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
     return { ok: true as const };
   }
 
-  return { invite, revokeInvite, acceptInvite, removeMember };
+  return { list, invite, revokeInvite, acceptInvite, removeMember };
 }

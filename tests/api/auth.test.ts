@@ -13,6 +13,7 @@ import { GET as me } from '@/app/api/me/route';
 import { POST as setup2fa } from '@/app/api/2fa/setup/route';
 import { POST as confirm2fa } from '@/app/api/2fa/confirm/route';
 import { POST as invite } from '@/app/api/team/invite/route';
+import { GET as listTeam } from '@/app/api/team/route';
 import { call, cookieOf, tokenFrom, randomIp } from './helpers';
 
 const owner = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL_OWNER });
@@ -181,10 +182,17 @@ describe('API · papel mudou, vale na próxima requisição [seg]', () => {
     const cookie = await sessionFor(email);
     const before = await call(invite, { cookie, body: { email: uniq('colega'), role: 'PROFISSIONAL' } });
     expect(before.status).not.toBe(403);
+    const listed = await call(listTeam, { method: 'GET', cookie });
+    expect(listed.status).toBe(200);
+    expect(listed.json.members).toHaveLength(1);
+    expect(Array.isArray(listed.json.invitations)).toBe(true);
+    expect(listed.text).not.toMatch(/tokenHash|invitedByUserId/);
 
     const u = await owner.user.findUniqueOrThrow({ where: { email } });
     await owner.membership.updateMany({ where: { userId: u.id }, data: { role: 'SECRETARIA' } });
     const after = await call(invite, { cookie, body: { email: uniq('colega'), role: 'PROFISSIONAL' } });
     expect([after.status, after.json.error.code]).toEqual([403, 'forbidden']);
+    const deniedList = await call(listTeam, { method: 'GET', cookie });
+    expect([deniedList.status, deniedList.json.error.code]).toEqual([403, 'forbidden']);
   });
 });

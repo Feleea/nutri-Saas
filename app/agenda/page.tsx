@@ -2,8 +2,10 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { ctx } from '@/src/server/context';
+import { can } from '@/src/server/permissions';
 import { SESSION_COOKIE } from '@/src/server/web';
 import AgendaActions from './AgendaActions';
+import TenantManagementLinks from '@/app/_components/TenantManagementLinks';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,12 +26,17 @@ export default async function Agenda({ searchParams }: { searchParams: Promise<{
 
   return (
     <main>
+      <TenantManagementLinks owner={session.role === 'TITULAR'} />
       <h1>Agenda</h1>
       <form className="filters" method="get">
         <div><label htmlFor="day">Dia</label><input id="day" name="day" type="date" defaultValue={current} /></div>
         <button>Ver</button>
       </form>
-      <p><Link className="btn" href="/agenda/novo">Marcar consulta</Link> <span className="muted">Horários no fuso {r.timezone}.</span></p>
+      <p>
+        <Link className="btn" href="/agenda/novo">Marcar consulta</Link>{' '}
+        {can(session.role, 'finance.read') && <><Link className="btn secondary" href="/financeiro">Financeiro</Link>{' '}<Link className="btn secondary" href="/marca">Identidade visual</Link>{' '}</>}
+        <span className="muted">Horários no fuso {r.timezone}.</span>
+      </p>
       {r.items.length === 0 ? (
         <div className="card"><p>Nenhuma consulta neste dia.</p></div>
       ) : (

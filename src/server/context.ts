@@ -11,6 +11,7 @@ import { createPatientService, consentDataSource } from '../patients/service';
 import { createNoticeService } from '../notices/service';
 import { createAgendaService, appointmentDataSource } from '../agenda/service';
 import { createClinicalService, anamnesisDataSource } from '../clinical/service';
+import { createMealPlanService, mealPlanDataSource } from '../meal-plans/service';
 import { createReminderJob } from '../agenda/reminders';
 import { createAdminPanel } from '../admin/panel';
 import { RateLimiter } from './ratelimit';
@@ -31,13 +32,14 @@ function build() {
     foods: createFoodService({ db: prisma }),
     patients,
     clinical,
+    mealPlans: createMealPlanService({ db: prisma }),
     notices: createNoticeService({ db: prisma }),
     agenda: createAgendaService({ db: prisma }),
     reminders: createReminderJob({ db: prisma, mailer }),
     // seções clínicas das próximas fases entram em `sources`; limpeza de cópias externas em `hooks`
     lgpd: createLgpdService({
       db: prisma,
-      sources: [consentDataSource, appointmentDataSource, anamnesisDataSource],
+      sources: [consentDataSource, appointmentDataSource, anamnesisDataSource, mealPlanDataSource],
       hooks: [{ name: 'avisos-de-limite', purge: (_patientId, accountId) => patients.reconcileLimitNotices(accountId) }],
     }),
     // serviços de plataforma: usam o papel admin do banco e só são chamados depois da autorização na rota

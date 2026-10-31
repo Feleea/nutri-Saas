@@ -18,3 +18,16 @@ table { width:100%; border-collapse:collapse; background:var(--card); border:1px
 th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); font-size:.9rem; }
 th { background:#eef3ef; } .filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; align-items:end; margin-bottom:16px; }
 .badge { padding:2px 8px; border-radius:999px; background:#e8efe9; font-size:.8rem; }
+.patient-clinical-links { display:flex; flex-wrap:wrap; gap:8px; }
+.meal-editor { border-top:1px solid var(--line); margin-top:20px; padding-top:16px; }
+.meal-heading, .meal-item, .meal-actions { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; }
+.meal-heading label { flex:1 1 180px; }
+.meal-item { padding:12px 0; border-top:1px solid var(--line); }
+.meal-item > * { flex:1 1 120px; }
+.meal-item strong { flex-basis:200px; }
+.food-search { background:#f6f8f6; padding:12px; border-radius:8px; }
+.link-button { background:transparent; color:var(--accent); margin:4px 0; padding:4px; text-align:left; text-decoration:underline; }
+.nutrition-totals { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px 16px; }
+.nutrition-totals div { border-bottom:1px solid var(--line); padding:4px 0; }
+.nutrition-totals dt { color:var(--muted); font-size:.85rem; }
+.nutrition-totals dd { margin:2px 0; font-weight:600; }

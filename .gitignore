@@ -7,3 +7,16 @@ next-env.d.ts
 Suas_Nutri___Plano_de_Desenvolvimento_do_SaaS.md
 */migrations/*
 docs/*
+!docs/lgp04-clinical-encryption.md
+!prisma/migrations/20261031223000_lgp04_clinical_encryption/
+!prisma/migrations/20261031223000_lgp04_clinical_encryption/migration.sql
+!prisma/migrations/20261031230000_meal_plans/
+!prisma/migrations/20261031230000_meal_plans/migration.sql
+!prisma/migrations/20261031231000_meal_plan_version_title/
+!prisma/migrations/20261031231000_meal_plan_version_title/migration.sql
+!prisma/migrations/20261031232000_meal_plan_encryption/
+!prisma/migrations/20261031232000_meal_plan_encryption/migration.sql
+!prisma/migrations/20261031233000_meal_plan_backfill_guard/
+!prisma/migrations/20261031233000_meal_plan_backfill_guard/migration.sql
+!prisma/migrations/20261031234000_meal_plan_plaintext_guard/
+!prisma/migrations/20261031234000_meal_plan_plaintext_guard/migration.sql

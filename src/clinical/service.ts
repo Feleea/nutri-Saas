@@ -1,13 +1,27 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import type { SessionInfo } from '../auth/service';
 import { withTenant } from '../db/tenant';
 import type { PatientDataSource } from '../lgpd/service';
+import {
+  decryptClinicalData, encryptClinicalData, newTenantDataKey, unwrapTenantDataKey, wrapTenantDataKey,
+} from './encryption';
 import {
   type AnamnesisBody, type AnamnesisPatch, type AnthropometryBody, type TemplateBody, type TemplatePatch,
   type TemplateField,
 } from './validation';
 
 type Tx = Prisma.TransactionClient;
+type KeyStore = {
+  tenantDataEncryptionKey: {
+    findUnique(args: { where: { accountId: string } }): Promise<{ wrappedKey: string } | null>;
+    upsert(args: {
+      where: { accountId: string };
+      create: { accountId: string; wrappedKey: string };
+      update: Record<string, never>;
+    }): Promise<{ wrappedKey: string }>;
+  };
+};
 const CLINICAL = new Set(['TITULAR', 'PROFISSIONAL']);
 const FORBIDDEN = { ok: false as const, reason: 'forbidden' as const };
 const NOT_FOUND = { ok: false as const, reason: 'not_found' as const };
@@ -54,6 +68,125 @@ function validateAnswers(fields: TemplateField[], answers: Record<string, unknow
       || new Set(value).size !== value.length)) errors.push(`invalid:${field.id}`);
   }
   return errors;
+}
+
+async function ensureTenantDataKey(tx: KeyStore, accountId: string): Promise<Buffer> {
+  const generated = newTenantDataKey();
+  try {
+    const wrappedKey = wrapTenantDataKey(accountId, generated);
+    const row = await tx.tenantDataEncryptionKey.upsert({
+      where: { accountId },
+      create: { accountId, wrappedKey },
+      update: {},
+    });
+    return unwrapTenantDataKey(accountId, row.wrappedKey);
+  } finally {
+    generated.fill(0);
+  }
+}
+
+async function existingTenantDataKey(tx: KeyStore, accountId: string): Promise<Buffer> {
+  const row = await tx.tenantDataEncryptionKey.findUnique({ where: { accountId } });
+  if (!row) throw new Error('chave clínica do tenant ausente');
+  return unwrapTenantDataKey(accountId, row.wrappedKey);
+}
+
+async function encryptForTenant(
+  tx: KeyStore,
+  accountId: string,
+  recordId: string,
+  kind: 'ANAMNESIS_ANSWERS' | 'ANTHROPOMETRY',
+  value: unknown,
+): Promise<string> {
+  const key = await ensureTenantDataKey(tx, accountId);
+  try {
+    return encryptClinicalData(accountId, recordId, kind, value, key);
+  } finally {
+    key.fill(0);
+  }
+}
+
+async function anamnesisDto<T extends {
+  id: string;
+  accountId: string;
+  answersCiphertext: string | null;
+  legacyAnswers: Prisma.JsonValue | null;
+}>(tx: KeyStore, record: T): Promise<Omit<T, 'answersCiphertext' | 'legacyAnswers'> & { answers: Prisma.JsonValue }> {
+  const { answersCiphertext, legacyAnswers, ...metadata } = record;
+  let answers: Prisma.JsonValue;
+  if (answersCiphertext) {
+    const key = await existingTenantDataKey(tx, record.accountId);
+    try {
+      answers = decryptClinicalData(
+        record.accountId, record.id, 'ANAMNESIS_ANSWERS', answersCiphertext, key,
+      ) as Prisma.JsonValue;
+    } finally {
+      key.fill(0);
+    }
+  } else if (legacyAnswers !== null) {
+    answers = legacyAnswers;
+  } else {
+    throw new Error('respostas clínicas ausentes');
+  }
+  return { ...metadata, answers };
+}
+
+type AnthropometryPayload = {
+  measuredAt: string;
+  weightKg: number;
+  heightCm: number;
+  bmi: number;
+  waistCm: number | null;
+  hipCm: number | null;
+  neckCm: number | null;
+  armCm: number | null;
+  thighCm: number | null;
+};
+
+async function anthropometryDto(tx: KeyStore, record: Prisma.AnthropometryRecordGetPayload<{}>) {
+  const {
+    clinicalDataCiphertext, measuredAt: legacyMeasuredAt, weightKg: legacyWeightKg,
+    heightCm: legacyHeightCm, bmi: legacyBmi, waistCm: legacyWaistCm,
+    hipCm: legacyHipCm, neckCm: legacyNeckCm, armCm: legacyArmCm, thighCm: legacyThighCm,
+    ...metadata
+  } = record;
+  let data: AnthropometryPayload;
+  if (clinicalDataCiphertext) {
+    const key = await existingTenantDataKey(tx, record.accountId);
+    try {
+      data = decryptClinicalData(
+        record.accountId, record.id, 'ANTHROPOMETRY', clinicalDataCiphertext, key,
+      ) as AnthropometryPayload;
+    } finally {
+      key.fill(0);
+    }
+  } else if (legacyMeasuredAt && legacyWeightKg && legacyHeightCm && legacyBmi) {
+    data = {
+      measuredAt: legacyMeasuredAt.toISOString(),
+      weightKg: Number(legacyWeightKg),
+      heightCm: Number(legacyHeightCm),
+      bmi: Number(legacyBmi),
+      waistCm: legacyWaistCm === null ? null : Number(legacyWaistCm),
+      hipCm: legacyHipCm === null ? null : Number(legacyHipCm),
+      neckCm: legacyNeckCm === null ? null : Number(legacyNeckCm),
+      armCm: legacyArmCm === null ? null : Number(legacyArmCm),
+      thighCm: legacyThighCm === null ? null : Number(legacyThighCm),
+    };
+  } else {
+    throw new Error('medidas clínicas ausentes');
+  }
+  return {
+    ...metadata,
+    measuredAt: data.measuredAt,
+    weightKg: String(data.weightKg),
+    heightCm: String(data.heightCm),
+    bmi: String(data.bmi),
+    waistCm: data.waistCm === null ? null : String(data.waistCm),
+    hipCm: data.hipCm === null ? null : String(data.hipCm),
+    neckCm: data.neckCm === null ? null : String(data.neckCm),
+    armCm: data.armCm === null ? null : String(data.armCm),
+    thighCm: data.thighCm === null ? null : String(data.thighCm),
+  };
 }
 
 export function normalizeAnthropometry(input: AnthropometryBody) {
@@ -178,7 +311,8 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
         accountId: s.accountId, actorUserId: s.userId, action: 'ANAMNESIS_LISTED',
         resource: 'Patient', resourceId: patientId, createdAt: now(),
       } });
-      return { ok: true as const, items: records };
+      const items = await Promise.all(records.map((record) => anamnesisDto(tx, record)));
+      return { ok: true as const, items };
     }, db);
   }
 
@@ -195,7 +329,7 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
         accountId: s.accountId, actorUserId: s.userId, action: 'ANAMNESIS_READ',
         resource: 'AnamnesisRecord', resourceId: id, createdAt: now(),
       } });
-      return { ok: true as const, record };
+      return { ok: true as const, record: await anamnesisDto(tx, record) };
     }, db);
   }
 
@@ -216,10 +350,15 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
       const fields = version.fields as unknown as TemplateField[];
       const errors = validateAnswers(fields, input.answers, input.status === 'COMPLETED');
       if (errors.length) return { ok: false as const, reason: 'validation', errors };
+      const id = randomUUID();
+      const answersCiphertext = await encryptForTenant(
+        tx, s.accountId, id, 'ANAMNESIS_ANSWERS', input.answers,
+      );
       const record = await tx.anamnesisRecord.create({
         data: {
+          id,
           accountId: s.accountId, patientId, templateId: template.id, templateVersionId: version.id,
-          templateVersion: version.version, answers: input.answers as Prisma.InputJsonValue, status: input.status,
+          templateVersion: version.version, answersCiphertext, status: input.status,
           createdByUserId: s.userId, updatedByUserId: s.userId,
           createdAt: now(), updatedAt: now(), completedAt: input.status === 'COMPLETED' ? now() : null,
         },
@@ -229,7 +368,7 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
         accountId: s.accountId, actorUserId: s.userId, action: 'ANAMNESIS_CREATED',
         resource: 'AnamnesisRecord', resourceId: record.id, createdAt: now(),
       } });
-      return { ok: true as const, record };
+      return { ok: true as const, record: await anamnesisDto(tx, record) };
     }, db);
   }
 
@@ -245,17 +384,21 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
       if (input.status === 'DRAFT' && current.status === 'COMPLETED') {
         return { ok: false as const, reason: 'not_editable' };
       }
-      const answers = input.answers ?? current.answers;
+      const currentDto = await anamnesisDto(tx, current);
+      const answers = input.answers ?? currentDto.answers;
       if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
         return { ok: false as const, reason: 'validation', errors: ['answers_must_be_object'] };
       }
       const targetStatus = input.status ?? current.status as 'DRAFT' | 'COMPLETED';
       const errors = validateAnswers(current.versionSnapshot.fields as unknown as TemplateField[], answers as Record<string, unknown>, targetStatus === 'COMPLETED');
       if (errors.length) return { ok: false as const, reason: 'validation', errors };
+      const answersCiphertext = await encryptForTenant(
+        tx, s.accountId, id, 'ANAMNESIS_ANSWERS', answers,
+      );
       const record = await tx.anamnesisRecord.update({
         where: { id },
         data: {
-          answers: answers as Prisma.InputJsonValue,
+          answersCiphertext, legacyAnswers: Prisma.DbNull,
           status: targetStatus,
           updatedByUserId: s.userId,
           updatedAt: now(),
@@ -267,7 +410,7 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
         accountId: s.accountId, actorUserId: s.userId, action: 'ANAMNESIS_UPDATED',
         resource: 'AnamnesisRecord', resourceId: id, createdAt: now(),
       } });
-      return { ok: true as const, record };
+      return { ok: true as const, record: await anamnesisDto(tx, record) };
     }, db);
   }
 
@@ -277,13 +420,16 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
       const access = await patientWithConsent(tx, patientId);
       if (!access.ok) return access;
       const items = await tx.anthropometryRecord.findMany({
-        where: { patientId }, orderBy: [{ measuredAt: 'desc' }, { id: 'asc' }],
+        where: { patientId }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       });
       await tx.auditLog.create({ data: {
         accountId: s.accountId, actorUserId: s.userId, action: 'ANTHROPOMETRY_LISTED',
         resource: 'Patient', resourceId: patientId, createdAt: now(),
       } });
-      return { ok: true as const, items, bmiClassification: 'NOT_CLASSIFIED' as const };
+      return {
+        ok: true as const, items: await Promise.all(items.map((item) => anthropometryDto(tx, item))),
+        bmiClassification: 'NOT_CLASSIFIED' as const,
+      };
     }, db);
   }
 
@@ -297,19 +443,36 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
       const access = await patientWithConsent(tx, patientId);
       if (!access.ok) return access;
       if (access.patient.status !== 'ACTIVE') return { ok: false as const, reason: 'patient_archived' };
+      const id = randomUUID();
+      const measuredAtIso = measuredAt.toISOString();
+      const clinicalData: AnthropometryPayload = {
+        measuredAt: measuredAtIso,
+        weightKg: normalized.weightKg,
+        heightCm: normalized.heightCm,
+        bmi: normalized.bmi,
+        waistCm: normalized.waistCm,
+        hipCm: normalized.hipCm,
+        neckCm: normalized.neckCm,
+        armCm: normalized.armCm,
+        thighCm: normalized.thighCm,
+      };
+      const clinicalDataCiphertext = await encryptForTenant(
+        tx, s.accountId, id, 'ANTHROPOMETRY', clinicalData,
+      );
       const record = await tx.anthropometryRecord.create({
         data: {
-          accountId: s.accountId, patientId, measuredAt,
-          weightKg: normalized.weightKg, heightCm: normalized.heightCm, bmi: normalized.bmi,
-          waistCm: normalized.waistCm, hipCm: normalized.hipCm, neckCm: normalized.neckCm,
-          armCm: normalized.armCm, thighCm: normalized.thighCm, createdByUserId: s.userId, createdAt: now(),
+          id, accountId: s.accountId, patientId, clinicalDataCiphertext,
+          createdByUserId: s.userId, createdAt: now(),
         },
       });
       await tx.auditLog.create({ data: {
         accountId: s.accountId, actorUserId: s.userId, action: 'ANTHROPOMETRY_CREATED',
         resource: 'AnthropometryRecord', resourceId: record.id, createdAt: now(),
       } });
-      return { ok: true as const, record, bmiClassification: 'NOT_CLASSIFIED' as const };
+      return {
+        ok: true as const, record: await anthropometryDto(tx, record),
+        bmiClassification: 'NOT_CLASSIFIED' as const,
+      };
     }, db);
   }
 
@@ -322,11 +485,17 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
 
 export const anamnesisDataSource: PatientDataSource = {
   name: 'registros-clinicos',
-  collect: async (t, patientId) => ({
-    anamneses: await t.anamnesisRecord.findMany({
+  collect: async (t, patientId) => {
+    const anamneses = await t.anamnesisRecord.findMany({
       where: { patientId }, include: { versionSnapshot: { select: { name: true, version: true, fields: true } } },
       orderBy: { createdAt: 'asc' },
-    }),
-    anthropometry: await t.anthropometryRecord.findMany({ where: { patientId }, orderBy: { measuredAt: 'asc' } }),
-  }),
+    });
+    const anthropometry = await t.anthropometryRecord.findMany({
+      where: { patientId }, orderBy: { createdAt: 'asc' },
+    });
+    return {
+      anamneses: await Promise.all(anamneses.map((record) => anamnesisDto(t, record))),
+      anthropometry: await Promise.all(anthropometry.map((record) => anthropometryDto(t, record))),
+    };
+  },
 };

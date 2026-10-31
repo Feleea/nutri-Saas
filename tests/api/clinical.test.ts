@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { seedTenants } from '../../prisma/seed-data';
 import { POST as signup } from '@/app/api/auth/signup/route';
 import { POST as login } from '@/app/api/auth/login/route';
@@ -88,6 +89,18 @@ describe('API clínica · anamnese, consentimento e antropometria [api][seg]', (
     expect(history.json.template.versions.map((v: { version: number }) => v.version)).toEqual([1, 2]);
     expect((await call(templates, { method: 'GET', cookie: t.cookie })).status).toBe(200);
     expect((await call(listAnamneses, { method: 'GET', cookie: t.cookie, params: { id: patientId } })).json.items).toHaveLength(1);
+    const stored = await owner.anamnesisRecord.findUniqueOrThrow({ where: { id: recordId } });
+    expect(stored.legacyAnswers).toBeNull();
+    expect(stored.answersCiphertext).not.toContain('Revisado por outro profissional');
+    expect(JSON.stringify(stored)).not.toContain('Revisado por outro profissional');
+    const clinicalSession = { accountId: t.accountId, userId: t.userId, role: 'TITULAR' as const };
+    const exported = await (await import('@/src/server/context')).ctx().lgpd.exportPatient(clinicalSession, patientId);
+    if (!exported.ok) throw new Error('exportação clínica falhou');
+    const downloaded = await (await import('@/src/server/context')).ctx().lgpd.downloadExport(clinicalSession, exported.token);
+    if (!downloaded.ok) throw new Error('download clínico falhou');
+    expect(JSON.parse(downloaded.content).secoes['registros-clinicos'].anamneses[0].answers).toEqual({
+      motivo: 'Revisado por outro profissional',
+    });
   });
 
   it('bloqueia leitura e gravação clínica sem consentimento, revogado ou de outro tenant', async () => {
@@ -133,6 +146,61 @@ describe('API clínica · anamnese, consentimento e antropometria [api][seg]', (
     expect([invalid.status, invalid.json.error.code]).toEqual([422, 'validation']);
     const rows = await call(listAnthropometry, { method: 'GET', cookie: t.cookie, params: { id: patientId } });
     expect(rows.json.items).toHaveLength(1);
+    const stored = await owner.anthropometryRecord.findFirstOrThrow({ where: { patientId } });
+    expect(stored).toMatchObject({
+      measuredAt: null, weightKg: null, heightCm: null, bmi: null, waistCm: null,
+    });
+    expect(stored.clinicalDataCiphertext).toBeTruthy();
+    expect(JSON.stringify(stored)).not.toContain('"weightKg":70');
+    expect(JSON.stringify(stored)).not.toContain('"heightCm":175');
+    expect(JSON.stringify(stored)).not.toContain('"waistCm":82');
+  });
+
+  it('usa uma chave de dados embrulhada e distinta para cada tenant', async () => {
+    const a = await tenant('clinical-key-a');
+    const b = await tenant('clinical-key-b');
+    for (const [t, prefix] of [[a, 'a'], [b, 'b']] as const) {
+      const patientId = await patient(t.cookie, `Paciente ${prefix}`);
+      const template = await call(createTemplate, { cookie: t.cookie, body: {
+        name: `Modelo ${prefix}`, fields: [{ id: 'campo', label: 'Campo', type: 'text' }],
+      } });
+      await call(createAnamnesis, { cookie: t.cookie, params: { id: patientId }, body: {
+        templateId: template.json.template.id, answers: { campo: `valor ${prefix}` },
+      } });
+    }
+    const keys = await Promise.all([a.accountId, b.accountId].map((accountId) =>
+      owner.tenantDataEncryptionKey.findUniqueOrThrow({ where: { accountId } }),
+    ));
+    expect(keys[0].wrappedKey).not.toBe(keys[1].wrappedKey);
+    const { unwrapTenantDataKey } = await import('../../src/clinical/encryption');
+    expect(() => unwrapTenantDataKey(a.accountId, keys[1].wrappedKey)).toThrow();
+  });
+
+  it('cifra uma resposta legada no primeiro caminho clínico autorizado que a altera', async () => {
+    const t = await tenant('clinical-legacy');
+    const patientId = await patient(t.cookie, 'Paciente legado');
+    const template = await call(createTemplate, { cookie: t.cookie, body: {
+      name: 'Modelo legado', fields: [{ id: 'campo', label: 'Campo', type: 'text', required: true }],
+    } });
+    const version = await owner.anamnesisTemplateVersion.findFirstOrThrow({
+      where: { templateId: template.json.template.id },
+    });
+    const id = randomUUID();
+    await owner.anamnesisRecord.create({ data: {
+      id, accountId: t.accountId, patientId, templateId: template.json.template.id,
+      templateVersionId: version.id, templateVersion: version.version,
+      legacyAnswers: { campo: 'resposta legada confidencial' }, status: 'DRAFT',
+      createdByUserId: t.userId, updatedByUserId: t.userId,
+    } });
+
+    const updated = await call(patchAnamnesis, {
+      method: 'PATCH', cookie: t.cookie, params: { id: patientId, recordId: id }, body: { status: 'COMPLETED' },
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.json.record.answers).toEqual({ campo: 'resposta legada confidencial' });
+    const stored = await owner.anamnesisRecord.findUniqueOrThrow({ where: { id } });
+    expect(stored.legacyAnswers).toBeNull();
+    expect(stored.answersCiphertext).not.toContain('resposta legada confidencial');
   });
 
   it('a secretaria não pode abrir rotas de modelos ou prontuário', async () => {

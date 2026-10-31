@@ -49,6 +49,7 @@ export function createFoodService({ db }: { db: PrismaClient }) {
         // atribuição de fonte e versão exibida junto do alimento
         source: f.table ? { code: f.table.code, name: f.table.name, version: f.table.version } : null,
         energyKcal: n(f.energyKcal), proteinG: n(f.proteinG), carbG: n(f.carbG), fatG: n(f.fatG), fiberG: n(f.fiberG),
+        micros: f.micros,
       }));
   }
 
@@ -99,5 +100,12 @@ export function createFoodService({ db }: { db: PrismaClient }) {
     return offeredMeasures(rows.map((r) => ({ label: r.label, grams: Number(r.grams) })));
   }
 
-  return { search, setDefaultTable, createCustomFood, addMeasure, getMeasures };
+  async function getMeasureOptions(s: SessionInfo, foodId: string) {
+    const rows = await tenant(s).householdMeasure.findMany({
+      where: { foodId }, orderBy: { label: 'asc' }, select: { id: true, label: true, grams: true },
+    });
+    return [{ id: null, label: 'g', grams: 1 }, ...rows.map((row) => ({ ...row, grams: Number(row.grams) }))];
+  }
+
+  return { search, setDefaultTable, createCustomFood, addMeasure, getMeasures, getMeasureOptions };
 }

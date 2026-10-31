@@ -55,6 +55,8 @@ model Account {
   anamnesisTemplates AnamnesisTemplate[]
   anamnesisRecords AnamnesisRecord[]
   anthropometryRecords AnthropometryRecord[]
+  mealPlans     MealPlan[]
+  mealPlanVersions MealPlanVersion[]
   subscription  Subscription?
   usageCounters UsageCounter[]
   auditLogs     AuditLog[]
@@ -70,6 +72,16 @@ model Account {
   appointments  Appointment[]
   appointmentHistory AppointmentHistory[]
   reminders     Reminder[]
+  clinicalDataEncryptionKey TenantDataEncryptionKey?
+}
+
+model TenantDataEncryptionKey {
+  accountId  String   @id
+  wrappedKey String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }
 
 model Unit {
@@ -104,6 +116,8 @@ model User {
   terms       TermsAcceptance[]
   sessions      Session[]
   appointmentsAsProfessional Appointment[] @relation("AppointmentProfessional")
+  mealPlansCreated MealPlan[] @relation("MealPlanCreator")
+  mealPlanVersionsCreated MealPlanVersion[] @relation("MealPlanVersionCreator")
   emailTokens   EmailToken[]
   recoveryCodes RecoveryCode[]
 }
@@ -197,6 +211,7 @@ model Patient {
   appointments Appointment[]
   anamneses AnamnesisRecord[]
   anthropometry AnthropometryRecord[]
+  mealPlans MealPlan[]
 
   @@index([accountId, status])
   @@index([accountId, cpf])
@@ -305,6 +320,7 @@ model Food {
   account  Account?          @relation(fields: [accountId], references: [id], onDelete: Cascade)
   table    FoodTable?        @relation(fields: [tableId], references: [id])
   measures HouseholdMeasure[]
+  mealPlanItems MealPlanItem[]
 
   @@unique([tableId, externalCode])
   @@index([normalizedName])
@@ -318,7 +334,85 @@ model HouseholdMeasure {
   grams  Decimal @db.Decimal(10, 3)
 
   food Food @relation(fields: [foodId], references: [id], onDelete: Cascade)
+  mealPlanItems MealPlanItem[]
 
+  @@index([foodId])
+}
+
+// ───────────── Planos alimentares ─────────────
+model MealPlan {
+  id        String   @id @default(cuid())
+  accountId String
+  patientId String
+  title     String?
+  createdByUserId String
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient Patient @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+  createdBy User @relation("MealPlanCreator", fields: [createdByUserId], references: [id])
+  versions MealPlanVersion[]
+
+  @@unique([id, accountId])
+  @@index([accountId, patientId, createdAt])
+}
+
+model MealPlanVersion {
+  id        String   @id @default(cuid())
+  planId    String
+  accountId String
+  version   Int
+  title     String?
+  encryptedPayload String?
+  createdByUserId String
+  createdAt DateTime @default(now())
+
+  plan      MealPlan @relation(fields: [planId, accountId], references: [id, accountId], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdBy User     @relation("MealPlanVersionCreator", fields: [createdByUserId], references: [id])
+  meals     MealPlanMeal[]
+
+  @@unique([planId, version])
+  @@unique([id, accountId])
+  @@index([accountId, planId])
+}
+
+model MealPlanMeal {
+  id        String @id @default(cuid())
+  accountId String
+  versionId String
+  name      String
+  time      String
+  sortOrder Int
+
+  version MealPlanVersion @relation(fields: [versionId, accountId], references: [id, accountId], onDelete: Cascade)
+  items   MealPlanItem[]
+
+  @@unique([id, accountId])
+  @@index([accountId, versionId, sortOrder])
+}
+
+model MealPlanItem {
+  id        String @id @default(cuid())
+  accountId String
+  mealId    String
+  foodId    String
+  measureId String?
+  quantity  Decimal @db.Decimal(10, 3)
+  grams     Decimal @db.Decimal(10, 3)
+  measureLabel String
+  measureGrams Decimal @db.Decimal(10, 3)
+  foodName  String
+  sourceCode String?
+  sourceName String?
+  sourceVersion String?
+  nutrients Json
+
+  meal    MealPlanMeal @relation(fields: [mealId, accountId], references: [id, accountId], onDelete: Cascade)
+  food    Food @relation(fields: [foodId], references: [id], onDelete: Restrict)
+  measure HouseholdMeasure? @relation(fields: [measureId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, mealId])
   @@index([foodId])
 }
 
@@ -526,7 +620,8 @@ model AnamnesisRecord {
   templateId        String
   templateVersionId String
   templateVersion   Int
-  answers           Json
+  answersCiphertext String?  @db.Text
+  legacyAnswers     Json?
   status            String   @default("DRAFT")
   createdByUserId   String
   updatedByUserId   String
@@ -548,15 +643,16 @@ model AnthropometryRecord {
   id              String   @id @default(cuid())
   accountId       String
   patientId       String
-  measuredAt      DateTime
-  weightKg        Decimal  @db.Decimal(6, 2)
-  heightCm        Decimal  @db.Decimal(6, 2)
-  bmi             Decimal  @db.Decimal(5, 1)
+  measuredAt      DateTime?
+  weightKg        Decimal? @db.Decimal(6, 2)
+  heightCm        Decimal? @db.Decimal(6, 2)
+  bmi             Decimal? @db.Decimal(5, 1)
   waistCm         Decimal? @db.Decimal(6, 2)
   hipCm           Decimal? @db.Decimal(6, 2)
   neckCm          Decimal? @db.Decimal(6, 2)
   armCm           Decimal? @db.Decimal(6, 2)
   thighCm         Decimal? @db.Decimal(6, 2)
+  clinicalDataCiphertext String? @db.Text
   createdByUserId String
   createdAt       DateTime @default(now())
 

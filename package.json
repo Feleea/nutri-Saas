@@ -11,6 +11,8 @@
     "db:setup": "prisma migrate deploy && npm run db:rls",
     "db:reset": "prisma migrate reset --force --skip-seed && npm run db:rls && npm run db:seed",
     "db:seed": "tsx prisma/seed.ts",
+    "clinical:backfill": "tsx scripts/backfill-clinical-encryption.ts",
+    "meal-plans:backfill": "tsx scripts/backfill-meal-plan-encryption.ts",
     "foods:import": "tsx scripts/import-foods.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",

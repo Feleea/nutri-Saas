@@ -140,6 +140,18 @@ export function createPatientService({ db, mailer, now = () => new Date() }: Dep
     };
   }
 
+  async function dashboardCounts(s: SessionInfo, activePatientDays: number) {
+    if (s.role !== 'TITULAR') return FORBIDDEN;
+    const t = tenant(s);
+    const activeSince = new Date(now().getTime() - activePatientDays * 86_400_000);
+    const [patientsTotal, patientsUsed, patientsActive] = await Promise.all([
+      t.patient.count(),
+      t.patient.count({ where: { status: 'ACTIVE' } }),
+      t.patient.count({ where: { status: 'ACTIVE', lastActivityAt: { gte: activeSince } } }),
+    ]);
+    return { ok: true as const, patientsTotal, patientsUsed, patientsActive };
+  }
+
   async function get(s: SessionInfo, id: string) {
     if (!CLINICAL.has(s.role)) return FORBIDDEN;
     const t = tenant(s);
@@ -255,7 +267,7 @@ export function createPatientService({ db, mailer, now = () => new Date() }: Dep
     return { ok: true as const, revoked: r.count };
   }
 
-  return { create, list, get, update, archive, restore, reconcileLimitNotices, recordConsent, revokeConsent };
+  return { create, list, dashboardCounts, get, update, archive, restore, reconcileLimitNotices, recordConsent, revokeConsent };
 }
 
 /** Os consentimentos entram na exportação LGPD do paciente. */

@@ -247,6 +247,20 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
     return { ok: true as const, timezone: tz, items: rows.map((r) => dto(r, tz)) };
   }
 
+  async function upcoming(s: SessionInfo, from: Date, to: Date) {
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from || to.getTime() - from.getTime() > config.maxRangeDays * 86_400_000) {
+      return fail('validation', { errors: ['range_invalid'] });
+    }
+    const t = tenant(s);
+    const account = await t.account.findUniqueOrThrow({ where: { id: s.accountId } });
+    const where: Prisma.AppointmentWhereInput = { startsAt: { gte: from, lt: to }, status: { in: ACTIVE } };
+    const [total, rows] = await Promise.all([
+      t.appointment.count({ where }),
+      t.appointment.findMany({ where, include: INCLUDE, orderBy: { startsAt: 'asc' }, take: 5 }),
+    ]);
+    return { ok: true as const, timezone: account.timezone, total, items: rows.map((r) => dto(r, account.timezone)) };
+  }
+
   async function get(s: SessionInfo, id: string) {
     const t = tenant(s);
     const account = await t.account.findUniqueOrThrow({ where: { id: s.accountId } });
@@ -288,7 +302,7 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
     return { ok: true as const, settings: await getSettings(s) };
   }
 
-  return { create, reschedule, cancel, setStatus, list, get, searchPatients, getSettings, updateSettings };
+  return { create, reschedule, cancel, setStatus, list, upcoming, get, searchPatients, getSettings, updateSettings };
 }
 
 /** As consultas entram na exportação LGPD do paciente (sem dados de outras pessoas). */

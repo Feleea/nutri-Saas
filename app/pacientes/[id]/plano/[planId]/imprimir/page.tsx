@@ -39,7 +39,7 @@ export default async function PrintableMealPlan({
     ctx().mealPlans.get(session, id, planId),
     withTenant(session.accountId, (tx) => tx.account.findUnique({
       where: { id: session.accountId },
-      select: { name: true, crn: true, phone: true, email: true },
+    select: { name: true, crn: true, phone: true, email: true, logoUrl: true },
     }), prisma),
   ]);
   if (!patientResult.ok || !planResult.ok) return <main><p>Plano alimentar não encontrado ou sem acesso.</p></main>;
@@ -58,6 +58,7 @@ export default async function PrintableMealPlan({
         <PrintButton />
       </div>
       <header className="print-header">
+        {account?.logoUrl && <img className="print-logo" src={account.logoUrl} alt={`Logotipo de ${account.name}`} referrerPolicy="no-referrer" />}
         <h1>{account?.name ?? 'Plano alimentar'}</h1>
         {(account?.crn || account?.phone || account?.email) && (
           <p>{[account.crn && `CRN ${account.crn}`, account.phone, account.email].filter(Boolean).join(' · ')}</p>

@@ -35,12 +35,27 @@ th { background:#eef3ef; } .filters { display:grid; grid-template-columns:repeat
 .meal-alternative > * { flex:1 1 150px; }
 .print-controls { display:flex; gap:8px; margin-bottom:16px; }
 .print-header { border-bottom:2px solid var(--line); margin-bottom:20px; }
+.print-logo { display:block; max-width:220px; max-height:90px; object-fit:contain; object-position:left center; margin-bottom:12px; }
 .print-meal { break-inside:avoid; page-break-inside:avoid; border-bottom:1px solid var(--line); padding:12px 0; }
 .print-footer { margin-top:32px; color:var(--muted); font-size:.8rem; }
+.brand-preview { margin-top:24px; padding-top:16px; border-top:1px solid var(--line); }
+.brand-preview img { display:block; max-width:240px; max-height:120px; object-fit:contain; }
+.finance-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.finance-summary .card { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
+.finance-summary strong { font-size:1.5rem; }
+.finance-table-wrap { overflow-x:auto; }
 @media print {
+  @page { margin: 14mm; }
   body { background:#fff; color:#111; }
-  main.printable-meal-plan { max-width:none; padding:0; }
+  main.printable-meal-plan { max-width:none; padding:0; font-size:10.5pt; }
   .print-hidden { display:none !important; }
-  .print-meal { break-inside:avoid; page-break-inside:avoid; }
+  .print-header { border-color:#888; break-after:avoid-page; }
+  .print-logo { max-width:180px; max-height:72px; }
+  .print-meal { break-inside:avoid; page-break-inside:avoid; border-color:#bbb; }
+  .print-meal h3, .nutrition-totals, .printable-meal-plan > h3 { break-after:avoid; }
+  .nutrition-totals div { border-color:#ddd; }
+  a { color:inherit; text-decoration:none; }
+  .print-footer { color:#555; }
   .card, table { box-shadow:none; }
+  * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 }

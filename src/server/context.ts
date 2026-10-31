@@ -12,6 +12,7 @@ import { createNoticeService } from '../notices/service';
 import { createAgendaService, appointmentDataSource } from '../agenda/service';
 import { createClinicalService, anamnesisDataSource } from '../clinical/service';
 import { createMealPlanService, mealPlanDataSource } from '../meal-plans/service';
+import { createFinanceService } from '../finance/service';
 import { createReminderJob } from '../agenda/reminders';
 import { createAdminPanel } from '../admin/panel';
 import { RateLimiter } from './ratelimit';
@@ -33,6 +34,7 @@ function build() {
     patients,
     clinical,
     mealPlans: createMealPlanService({ db: prisma }),
+    finance: createFinanceService({ db: prisma }),
     notices: createNoticeService({ db: prisma }),
     agenda: createAgendaService({ db: prisma }),
     reminders: createReminderJob({ db: prisma, mailer }),

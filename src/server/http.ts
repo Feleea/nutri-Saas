@@ -27,6 +27,8 @@ const STATUS: Record<string, number> = {
   conflict: 409, in_the_past: 422, patient_not_found: 404, not_editable: 409, professional_required: 422,
   duplicate_cpf: 409, patient_limit: 409, access_restricted: 403, already_archived: 409, not_archived: 409,
   consent_required: 409, patient_archived: 409, confirm_warnings: 422, ingredient_unavailable: 404,
+  appointment_not_found: 404, invalid_amount: 422, invalid_payment_date: 422, invalid_month: 422,
+  charge_not_pending: 409,
 };
 export const failFrom = (reason: string, extra: Record<string, unknown> = {}) => fail(STATUS[reason] ?? 400, reason, extra);
 

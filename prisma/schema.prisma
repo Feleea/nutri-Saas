@@ -39,6 +39,7 @@ model Account {
   email        String
   phone        String?
   crn          String?
+  logoUrl      String?
   city         String?
   status       AccountStatus @default(TRIAL)
   trialEndsAt  DateTime?
@@ -71,6 +72,7 @@ model Account {
   notices       Notice[]
   patientConsents PatientConsent[]
   appointments  Appointment[]
+  charges       Charge[]
   appointmentHistory AppointmentHistory[]
   reminders     Reminder[]
   clinicalDataEncryptionKey TenantDataEncryptionKey?
@@ -210,6 +212,7 @@ model Patient {
   unit     Unit?            @relation(fields: [unitId], references: [id])
   consents PatientConsent[]
   appointments Appointment[]
+  charges Charge[]
   anamneses AnamnesisRecord[]
   anthropometry AnthropometryRecord[]
   mealPlans MealPlan[]
@@ -734,6 +737,7 @@ model Appointment {
   professional User                 @relation("AppointmentProfessional", fields: [professionalUserId], references: [id])
   history      AppointmentHistory[]
   reminders    Reminder[]
+  charges      Charge[]
 
   @@index([accountId, startsAt])
   @@index([patientId])
@@ -775,5 +779,42 @@ model Reminder {
   appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([status, sendAt])
+  @@index([appointmentId])
+}
+
+enum ChargeStatus {
+  PENDING
+  PAID
+}
+
+enum PaymentMethod {
+  PIX
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  TRANSFER
+  OTHER
+}
+
+model Charge {
+  id            String        @id @default(cuid())
+  accountId     String
+  patientId     String
+  appointmentId String?
+  description   String        @db.VarChar(160)
+  amountCents   Int
+  paymentMethod PaymentMethod
+  status        ChargeStatus  @default(PENDING)
+  occurredAt    DateTime      @default(now())
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, occurredAt])
+  @@index([accountId, paidAt])
+  @@index([patientId])
   @@index([appointmentId])
 }

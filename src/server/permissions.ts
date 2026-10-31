@@ -11,6 +11,10 @@ const OWNER_ONLY: Role[] = ['TITULAR'];
 export const ACTIONS = {
   'account.read': ALL,
   'account.settings': OWNER_ONLY,
+  'brand.read': CLINICAL,
+  'brand.manage': CLINICAL,
+  'finance.read': CLINICAL,
+  'finance.write': CLINICAL,
   '2fa.manage': ALL,
   'agenda.read': ALL,
   'agenda.write': ALL, // a secretária gerencia a agenda (sem acesso clínico)

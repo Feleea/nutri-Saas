@@ -29,6 +29,10 @@ describe('US-SEC-02 · matriz de permissões [unit]', () => {
     'billing.manage': ['TITULAR'],
     'billing.read': ['TITULAR'],
     'account.settings': ['TITULAR'],
+    'brand.read': ['TITULAR', 'PROFISSIONAL'],
+    'brand.manage': ['TITULAR', 'PROFISSIONAL'],
+    'finance.read': ['TITULAR', 'PROFISSIONAL'],
+    'finance.write': ['TITULAR', 'PROFISSIONAL'],
     'foods.read': ['TITULAR', 'PROFISSIONAL'],
     'foods.write': ['TITULAR', 'PROFISSIONAL'],
     'patient.read': ['TITULAR', 'PROFISSIONAL'],
@@ -47,7 +51,7 @@ describe('US-SEC-02 · matriz de permissões [unit]', () => {
     for (const r of roles) expect(can(r, action as keyof typeof ACTIONS)).toBe(allowed.includes(r));
   });
   it('a secretaria nunca acessa dados clínicos', () => {
-    for (const a of ['patient.read', 'patient.write', 'patient.export', 'patient.delete', 'foods.write'] as const) expect(can('SECRETARIA', a)).toBe(false);
+    for (const a of ['patient.read', 'patient.write', 'patient.export', 'patient.delete', 'foods.write', 'brand.read', 'brand.manage', 'finance.read', 'finance.write'] as const) expect(can('SECRETARIA', a)).toBe(false);
   });
   it('papel desconhecido não tem acesso a nada', () => {
     for (const a of Object.keys(ACTIONS)) expect(can('SUPER', a as keyof typeof ACTIONS)).toBe(false);

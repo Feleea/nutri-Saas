@@ -30,6 +30,7 @@ export default async function Pacientes({ searchParams }: { searchParams: Promis
         <button>Filtrar</button>
       </form>
       <p><Link className="btn" href="/pacientes/novo">Cadastrar paciente</Link></p>
+      <p><Link className="btn secondary" href="/pacientes/importar">Importar CSV</Link></p>
       {r.empty ? (
         <div className="card">
           <p>Nenhum paciente encontrado{sp.q ? ` para “${sp.q}”` : ''}.</p>

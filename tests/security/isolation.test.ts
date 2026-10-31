@@ -75,7 +75,7 @@ describe('US-SEC-01 · isolamento entre tenants [seg]', () => {
 });
 
 describe('US-ADM-00 / US-ADM-01 · super-admin sem acesso clínico [seg]', () => {
-  const clinical = ['Patient', 'Unit', 'Membership', 'User', 'TermsAcceptance', 'AuditLog', 'Food', 'HouseholdMeasure', 'Session', 'EmailToken', 'RecoveryCode', 'Invitation'];
+  const clinical = ['Patient', 'Unit', 'Membership', 'User', 'TermsAcceptance', 'AuditLog', 'AuthAuditLog', 'Food', 'HouseholdMeasure', 'Session', 'EmailToken', 'RecoveryCode', 'Invitation'];
 
   it.each(clinical)('super-admin recebe acesso negado em "%s"', async (table) => {
     await expect(adminPrisma.$queryRawUnsafe(`SELECT * FROM "${table}" LIMIT 1`)).rejects.toThrow(
@@ -132,5 +132,28 @@ describe('US-SEC-03 · auditoria imutável [seg]', () => {
       data: { accountId: TENANT_A, action: 'PATIENT_VIEW', resource: 'Patient', resourceId: 'pat_a1' },
     });
     expect(row.accountId).toBe(TENANT_A);
+  });
+
+  it('falhas de login são somente-inserção, não revelam identidade e não ficam legíveis aos papéis', async () => {
+    await prisma.$queryRaw`SELECT append_auth_audit('USER_LOGIN_FAILED', '203.0.113.20')`;
+    await adminPrisma.$queryRaw`SELECT append_auth_audit('ADMIN_LOGIN_FAILED', '203.0.113.21')`;
+    const userEvent = await owner.authAuditLog.findFirstOrThrow({
+      where: { action: 'USER_LOGIN_FAILED', sourceIp: '203.0.113.20' },
+    });
+    const adminEvent = await owner.authAuditLog.findFirstOrThrow({
+      where: { action: 'ADMIN_LOGIN_FAILED', sourceIp: '203.0.113.21' },
+    });
+    expect(userEvent).toMatchObject({ action: 'USER_LOGIN_FAILED', sourceIp: '203.0.113.20' });
+    expect(adminEvent).toMatchObject({ action: 'ADMIN_LOGIN_FAILED', sourceIp: '203.0.113.21' });
+    await expect(prisma.authAuditLog.findMany()).rejects.toThrow(/permission denied/i);
+    await expect(adminPrisma.authAuditLog.findMany()).rejects.toThrow(/permission denied/i);
+    await expect(prisma.$executeRaw`INSERT INTO "AuthAuditLog" ("id", "action") VALUES ('app_insert', 'USER_LOGIN_FAILED')`)
+      .rejects.toThrow(/permission denied/i);
+    await expect(prisma.$queryRaw`SELECT append_auth_audit('OTHER', '203.0.113.22')`)
+      .rejects.toThrow(/tipo de auditoria inválido/);
+    await expect(prisma.$queryRaw`SELECT append_auth_audit('USER_LOGIN_FAILED', 'nao-e-ip')`)
+      .rejects.toThrow(/inet/i);
+    await expect(owner.authAuditLog.update({ where: { id: userEvent.id }, data: { action: 'X' } })).rejects.toThrow(/imutável/);
+    await expect(owner.authAuditLog.delete({ where: { id: adminEvent.id } })).rejects.toThrow(/imutável/);
   });
 });

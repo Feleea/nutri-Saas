@@ -85,10 +85,17 @@ describe('API · sessão e erros genéricos [seg]', () => {
   it('senha errada e e-mail inexistente devolvem exatamente a mesma resposta', async () => {
     const email = uniq('gen');
     await registerVerified(email);
-    const wrong = await call(login, { body: { email, password: 'Errada-12345' } });
-    const unknown = await call(login, { body: { email: uniq('fantasma'), password: 'Errada-12345' } });
+    const ip = '198.51.100.40';
+    const wrong = await call(login, { ip, body: { email, password: 'Errada-12345' } });
+    const unknown = await call(login, { ip, body: { email: uniq('fantasma'), password: 'Errada-12345' } });
     expect([wrong.status, wrong.text]).toEqual([unknown.status, unknown.text]);
     expect(wrong.status).toBe(401);
+
+    const failures = await owner.authAuditLog.findMany({ where: { action: 'USER_LOGIN_FAILED', sourceIp: ip } });
+    expect(failures).toHaveLength(2);
+    expect(failures.map((entry) => entry.action)).toEqual(['USER_LOGIN_FAILED', 'USER_LOGIN_FAILED']);
+    expect(JSON.stringify(failures)).not.toContain(email);
+    expect(JSON.stringify(failures)).not.toMatch(/password|token|secret/i);
   });
 
   it('cookie forjado ou vazio não autentica', async () => {

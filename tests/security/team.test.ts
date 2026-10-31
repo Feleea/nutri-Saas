@@ -45,13 +45,17 @@ afterAll(async () => { await Promise.all([owner.$disconnect(), db.$disconnect()]
 describe('US-AUT-05 · convidar membros da equipe [e2e][seg][api]', () => {
   it('envia convite com validade de 7 dias e guarda só o hash do token', async () => {
     const { session, accountId } = await titular('t1@example.test');
-    const r = await team.invite(session, 'Prof1@Example.test', 'PROFISSIONAL');
+    const r = await team.invite(session, 'Prof1@Example.test', 'PROFISSIONAL', '203.0.113.8');
     expect(r.ok).toBe(true);
     const token = tokenFrom('prof1@example.test', 'team_invite');
     const inv = await owner.invitation.findFirstOrThrow({ where: { accountId } });
     expect(inv.tokenHash).toBe(hashToken(token));
     expect(inv.tokenHash).not.toBe(token);
     expect(inv.role).toBe('PROFISSIONAL');
+    const log = await owner.auditLog.findFirstOrThrow({ where: { accountId, action: 'INVITE_SENT', resourceId: inv.id } });
+    expect(log.actorUserId).toBe(session.userId);
+    expect(log.details).toEqual({ role: 'PROFISSIONAL' });
+    expect(log.ip).toBe('203.0.113.8');
     const days = (inv.expiresAt.getTime() - clock) / 86_400_000;
     expect(days).toBeCloseTo(7, 1);
   });
@@ -70,6 +74,11 @@ describe('US-AUT-05 · convidar membros da equipe [e2e][seg][api]', () => {
     expect(ms.some((m) => m.accountId === other.accountId)).toBe(false);
     expect(u.emailVerifiedAt).not.toBeNull();
     expect(await owner.termsAcceptance.count({ where: { userId: u.id } })).toBe(3);
+    const roleGrant = await owner.auditLog.findFirstOrThrow({
+      where: { accountId, action: 'MEMBER_ROLE_GRANTED', resourceId: ms[0].id },
+    });
+    expect(roleGrant.actorUserId).toBe(session.userId);
+    expect(roleGrant.details).toEqual({ role: 'PROFISSIONAL' });
 
     const login = await auth.login('prof2@example.test', PASSWORD);
     expect(login.ok && login.accountId).toBe(accountId);
@@ -95,6 +104,10 @@ describe('US-AUT-05 · convidar membros da equipe [e2e][seg][api]', () => {
     expect(await team.invite(session, 'v2@example.test', 'PROFISSIONAL')).toEqual({ ok: false, reason: 'user_limit' });
     if (!first.ok) throw new Error();
     expect(await team.revokeInvite(session, first.invitationId)).toBe(true);
+    const revokeLog = await owner.auditLog.findFirstOrThrow({
+      where: { accountId: session.accountId, action: 'INVITE_REVOKED', resourceId: first.invitationId },
+    });
+    expect(revokeLog.details).toEqual({ role: 'PROFISSIONAL' });
     expect((await team.invite(session, 'v2@example.test', 'PROFISSIONAL')).ok).toBe(true);
     // o convite revogado não pode mais ser aceito
     expect(await team.acceptInvite(tokenFrom('v1@example.test', 'team_invite'), newMember)).toEqual({ ok: false, reason: 'invalid_invite' });
@@ -104,8 +117,13 @@ describe('US-AUT-05 · convidar membros da equipe [e2e][seg][api]', () => {
     const { session } = await titular('t5@example.test');
     await team.invite(session, 'dup@example.test', 'PROFISSIONAL');
     const old = tokenFrom('dup@example.test', 'team_invite');
+    const oldInvite = await owner.invitation.findFirstOrThrow({ where: { accountId: session.accountId, email: 'dup@example.test' } });
     await team.invite(session, 'dup@example.test', 'SECRETARIA');
     expect(await team.acceptInvite(old, newMember)).toEqual({ ok: false, reason: 'invalid_invite' });
+    const revoked = await owner.auditLog.findFirstOrThrow({
+      where: { accountId: session.accountId, action: 'INVITE_REVOKED', resourceId: oldInvite.id },
+    });
+    expect(revoked.details).toMatchObject({ role: 'PROFISSIONAL', reason: 'replaced' });
     const r = await team.acceptInvite(tokenFrom('dup@example.test', 'team_invite'), newMember);
     expect(r.ok && r.role).toBe('SECRETARIA');
   });
@@ -125,6 +143,12 @@ describe('US-AUT-05 · convidar membros da equipe [e2e][seg][api]', () => {
     expect(await owner.membership.count({ where: { userId: member.id, accountId } })).toBe(0);
     const history = await owner.auditLog.count({ where: { accountId, actorUserId: member.id } });
     expect(history).toBeGreaterThan(0);
+    const removed = await owner.auditLog.findFirstOrThrow({
+      where: { accountId, action: 'MEMBER_REMOVED', actorUserId: session.userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(removed.details).toEqual({ role: 'PROFISSIONAL' });
+    expect(removed.resourceId).not.toBe(member.id);
     expect(await auth.login('saindo@example.test', PASSWORD)).toEqual({ ok: false, reason: 'invalid_credentials' });
   });
 

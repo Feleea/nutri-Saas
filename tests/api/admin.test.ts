@@ -30,12 +30,17 @@ afterAll(async () => { await Promise.all([owner.$disconnect(), adminDb.$disconne
 
 describe('API · login do super-admin [seg]', () => {
   it('sem código, com código errado ou com senha errada: mesma resposta 401', async () => {
-    const a = await call(adminLogin, { body: { email: EMAIL, password: PASS, code: '000000' } });
-    const b = await call(adminLogin, { body: { email: EMAIL, password: 'errada', code: totpCode(totp, Date.now()) } });
-    const c = await call(adminLogin, { body: { email: 'ninguem@example.test', password: PASS, code: '000000' } });
+    const ip = '198.51.100.41';
+    const a = await call(adminLogin, { ip, body: { email: EMAIL, password: PASS, code: '000000' } });
+    const b = await call(adminLogin, { ip, body: { email: EMAIL, password: 'errada', code: totpCode(totp, Date.now()) } });
+    const c = await call(adminLogin, { ip, body: { email: 'ninguem@example.test', password: PASS, code: '000000' } });
     expect([a.status, b.status, c.status]).toEqual([401, 401, 401]);
     expect(a.text).toBe(b.text);
     expect(b.text).toBe(c.text);
+    const failures = await owner.authAuditLog.findMany({ where: { action: 'ADMIN_LOGIN_FAILED', sourceIp: ip } });
+    expect(failures).toHaveLength(3);
+    expect(JSON.stringify(failures)).not.toContain(EMAIL);
+    expect(JSON.stringify(failures)).not.toMatch(/password|token|secret/i);
   });
 
   it('senha + código válidos abrem a sessão do painel; o código não pode ser reutilizado', async () => {
@@ -85,12 +90,16 @@ describe('API · painel do dono [seg]', () => {
 
   it('suspender exige motivo, é auditado; reativar e estender trial respeitam as regras', async () => {
     expect((await call(suspend, { cookie, params: { id: TENANT_A }, body: { reason: '' } })).status).toBe(400);
-    expect((await call(suspend, { cookie, params: { id: TENANT_A }, body: { reason: 'análise de fraude' } })).status).toBe(200);
+    const sourceIp = '198.51.100.42';
+    expect((await call(suspend, { cookie, ip: sourceIp, params: { id: TENANT_A }, body: { reason: 'análise de fraude' } })).status).toBe(200);
     expect((await call(suspend, { cookie, params: { id: TENANT_A }, body: { reason: 'de novo' } })).status).toBe(409);
     const log = await owner.adminAuditLog.findFirstOrThrow({ where: { action: 'ACCOUNT_SUSPENDED', targetAccountId: TENANT_A } });
     expect(log.adminId).toBe('adm_api');
+    expect(log.details).toMatchObject({ sourceIp });
 
-    expect((await call(reactivate, { cookie, params: { id: TENANT_A } })).json).toEqual({ ok: true, status: 'TRIAL' });
+    expect((await call(reactivate, { cookie, ip: sourceIp, params: { id: TENANT_A } })).json).toEqual({ ok: true, status: 'TRIAL' });
+    const reactivation = await owner.adminAuditLog.findFirstOrThrow({ where: { action: 'ACCOUNT_REACTIVATED', targetAccountId: TENANT_A } });
+    expect(reactivation.details).toMatchObject({ sourceIp });
     expect((await call(extendTrial, { cookie, params: { id: TENANT_A }, body: { days: 7 } })).status).toBe(200);
     expect((await call(extendTrial, { cookie, params: { id: TENANT_A }, body: { days: 90 } })).status).toBe(422);
     expect((await call(tenantDetail, { method: 'GET', cookie, params: { id: 'nao_existe' } })).status).toBe(404);

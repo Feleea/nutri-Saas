@@ -5,6 +5,6 @@ import { ctx } from '@/src/server/context';
 export const POST = defineRoute<undefined, { id: string }>({
   auth: 'session',
   action: 'team.manage',
-  handler: async ({ session, params }) =>
-    (await ctx().team.revokeInvite(session!, params.id)) ? reply({ ok: true }) : failFrom('not_found'),
+  handler: async ({ session, params, ip }) =>
+    (await ctx().team.revokeInvite(session!, params.id, ip)) ? reply({ ok: true }) : failFrom('not_found'),
 });

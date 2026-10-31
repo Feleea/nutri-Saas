@@ -130,7 +130,7 @@ export function createPatientService({ db, mailer, now = () => new Date() }: Dep
     const rows = await t.patient.findMany({
       where, orderBy: [{ normalizedName: 'asc' }, { id: 'asc' }], take: limit + 1,
       ...(o.cursor && { cursor: { id: o.cursor }, skip: 1 }),
-      include: { consents: { where: { revokedAt: null }, select: { id: true }, take: 1 } },
+      include: { consents: { where: { kind: 'DATA_PROCESSING', revokedAt: null }, select: { id: true }, take: 1 } },
     });
     const total = await t.patient.count({ where });
     const page = rows.slice(0, limit);
@@ -146,7 +146,7 @@ export function createPatientService({ db, mailer, now = () => new Date() }: Dep
     const p = await t.patient.findUnique({ where: { id }, include: { consents: { orderBy: { grantedAt: 'desc' } } } });
     if (!p) return NOT_FOUND;
     await t.auditLog.create({ data: { accountId: s.accountId, actorUserId: s.userId, action: 'PATIENT_VIEW', resource: 'Patient', resourceId: id, createdAt: now() } });
-    const consent = p.consents.find((c) => !c.revokedAt) ?? null;
+    const consent = p.consents.find((c) => c.kind === 'DATA_PROCESSING' && !c.revokedAt) ?? null;
     return {
       ok: true as const,
       patient: dto(p, { fullCpf: true }),

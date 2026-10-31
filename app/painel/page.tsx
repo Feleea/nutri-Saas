@@ -30,7 +30,7 @@ export default async function Painel() {
       {notices.map((n) => <div key={n.id} className="card"><p className="error" role="alert">{n.message}</p></div>)}
       <p>
         <Link className="btn" href="/agenda">Agenda</Link>{' '}
-        {session.role !== 'SECRETARIA' && <Link className="btn secondary" href="/pacientes">Pacientes</Link>}
+        {session.role !== 'SECRETARIA' && <><Link className="btn secondary" href="/pacientes">Pacientes</Link>{' '}<Link className="btn secondary" href="/anamnese">Modelos de anamnese</Link></>}
       </p>
       <LogoutButton />
     </main>

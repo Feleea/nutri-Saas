@@ -6,8 +6,8 @@ export const POST = defineRoute({
   auth: 'public',
   rateLimit: { key: 'admin-login', max: 5, windowSec: 900 },
   body: z.object({ email: z.string().max(254), password: z.string().min(1).max(200), code: z.string().min(1).max(12) }),
-  handler: async ({ body }) => {
-    const r = await ctx().adminAuth.login(body.email, body.password, body.code);
+  handler: async ({ body, ip }) => {
+    const r = await ctx().adminAuth.login(body.email, body.password, body.code, ip);
     if (!r.ok) return fail(401, 'invalid_credentials');
     return reply({ ok: true }, { cookies: [cookie(ADMIN_COOKIE, r.token, { maxAge: 3600 })] });
   },

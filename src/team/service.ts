@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword, validatePassword, newToken, hashToken } f
 import { TERMS_VERSION, type SessionInfo } from '../auth/service';
 import type { Mailer } from '../auth/mailer';
 import { appUrl } from '../auth/links';
+import { auditOrigin } from '../auth/audit';
 
 export const TEAM_CONFIG = { inviteDays: 7 };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -35,7 +36,7 @@ interface Deps {
 export function createTeamService({ db, mailer, now = () => new Date(), config = TEAM_CONFIG }: Deps) {
   const tenant = (s: SessionInfo) => forTenant(s.accountId, s.userId, db);
 
-  async function invite(s: SessionInfo, emailRaw: string, role: InvitableRole): Promise<InviteResult> {
+  async function invite(s: SessionInfo, emailRaw: string, role: InvitableRole, sourceIp = 'unknown'): Promise<InviteResult> {
     if (s.role !== 'TITULAR') return { ok: false, reason: 'forbidden' };
     if (role !== 'PROFISSIONAL' && role !== 'SECRETARIA') return { ok: false, reason: 'invalid_role' };
     const email = emailRaw.trim().toLowerCase();
@@ -53,7 +54,24 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
     });
     if (limit !== null && members + pending >= limit) return { ok: false, reason: 'user_limit' };
 
-    await t.invitation.updateMany({ where: { email, acceptedAt: null, revokedAt: null }, data: { revokedAt: now() } });
+    const previousInvites = await t.invitation.findMany({
+      where: { email, acceptedAt: null, revokedAt: null },
+      select: { id: true, role: true },
+    });
+    if (previousInvites.length) {
+      await t.invitation.updateMany({
+        where: { email, acceptedAt: null, revokedAt: null },
+        data: { revokedAt: now() },
+      });
+      await t.auditLog.createMany({
+        data: previousInvites.map((previous) => ({
+          accountId: s.accountId, actorUserId: s.userId, action: 'INVITE_REVOKED',
+          resource: 'Invitation', resourceId: previous.id,
+          details: { role: previous.role, reason: 'replaced' },
+          ip: auditOrigin(sourceIp),
+        })),
+      });
+    }
     const { token, hash } = newToken();
     const inv = await t.invitation.create({
       data: {
@@ -62,7 +80,10 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
       },
     });
     await t.auditLog.create({
-      data: { accountId: s.accountId, actorUserId: s.userId, action: 'INVITE_SENT', resource: 'Invitation', resourceId: inv.id },
+      data: {
+        accountId: s.accountId, actorUserId: s.userId, action: 'INVITE_SENT',
+        resource: 'Invitation', resourceId: inv.id, details: { role }, ip: auditOrigin(sourceIp),
+      },
     });
     await mailer.send({
       to: email,
@@ -73,12 +94,26 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
     return { ok: true, invitationId: inv.id };
   }
 
-  async function revokeInvite(s: SessionInfo, invitationId: string): Promise<boolean> {
+  async function revokeInvite(s: SessionInfo, invitationId: string, sourceIp = 'unknown'): Promise<boolean> {
     if (s.role !== 'TITULAR') return false;
-    const r = await tenant(s).invitation.updateMany({
+    const t = tenant(s);
+    const invitation = await t.invitation.findFirst({
+      where: { id: invitationId, acceptedAt: null, revokedAt: null },
+    });
+    if (!invitation) return false;
+    const r = await t.invitation.updateMany({
       where: { id: invitationId, acceptedAt: null, revokedAt: null },
       data: { revokedAt: now() },
     });
+    if (r.count === 1) {
+      await t.auditLog.create({
+        data: {
+          accountId: s.accountId, actorUserId: s.userId, action: 'INVITE_REVOKED',
+          resource: 'Invitation', resourceId: invitationId, details: { role: invitation.role },
+          ip: auditOrigin(sourceIp),
+        },
+      });
+    }
     return r.count === 1;
   }
 
@@ -86,7 +121,7 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
    * Conta e papel vêm do convite (no banco), não do chamador. Quem já tem usuário precisa
    * provar a senha; quem é novo cria a senha e aceita os termos.
    */
-  async function acceptInvite(token: string, input: AcceptInput = {}): Promise<AcceptResult> {
+  async function acceptInvite(token: string, input: AcceptInput = {}, sourceIp = 'unknown'): Promise<AcceptResult> {
     const rows = await db.$queryRaw<{ account_id: string; role: string; user_id: string | null }[]>`
       SELECT account_id, role, user_id FROM invitation_peek(${hashToken(token)}, ${now()}::timestamptz)`;
     const inv = rows[0];
@@ -113,7 +148,8 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
     try {
       const [r] = await db.$queryRaw<{ account_id: string | null }[]>`
         SELECT invitation_accept(${hashToken(token)}, ${now()}::timestamptz, ${userId}::text,
-                                 ${userName}::text, ${passwordHash}::text, ${TERMS_VERSION}::text) AS account_id`;
+                                 ${userName}::text, ${passwordHash}::text, ${TERMS_VERSION}::text,
+                                 ${auditOrigin(sourceIp)}::text) AS account_id`;
       if (!r?.account_id) return { ok: false, reason: 'invalid_invite' };
       return { ok: true, accountId: r.account_id, role: inv.role };
     } catch (e) {
@@ -123,7 +159,7 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
   }
 
   /** Remove o acesso na hora (sessões revogadas); o histórico de ações da pessoa é mantido. */
-  async function removeMember(s: SessionInfo, userId: string) {
+  async function removeMember(s: SessionInfo, userId: string, sourceIp = 'unknown') {
     if (s.role !== 'TITULAR') return { ok: false as const, reason: 'forbidden' as const };
     if (userId === s.userId) return { ok: false as const, reason: 'cannot_remove_self' as const };
     const t = tenant(s);
@@ -134,7 +170,10 @@ export function createTeamService({ db, mailer, now = () => new Date(), config =
     await t.membership.delete({ where: { id: m.id } });
     await db.session.updateMany({ where: { userId, accountId: s.accountId, revokedAt: null }, data: { revokedAt: now() } });
     await t.auditLog.create({
-      data: { accountId: s.accountId, actorUserId: s.userId, action: 'MEMBER_REMOVED', resource: 'Membership', resourceId: userId },
+      data: {
+        accountId: s.accountId, actorUserId: s.userId, action: 'MEMBER_REMOVED',
+        resource: 'Membership', resourceId: m.id, details: { role: m.role }, ip: auditOrigin(sourceIp),
+      },
     });
     return { ok: true as const };
   }

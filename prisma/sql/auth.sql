@@ -94,9 +94,11 @@ $$;
 
 -- Conta, papel e e-mail vêm SEMPRE do convite, nunca do chamador: o convidado só entra
 -- no tenant que o convidou, com o papel definido. Retorna NULL se o convite não for válido.
+DROP FUNCTION IF EXISTS invitation_accept(text, timestamptz, text, text, text, text);
+DROP FUNCTION IF EXISTS invitation_accept(text, timestamptz, text, text, text, text, text);
 CREATE OR REPLACE FUNCTION invitation_accept(
   p_token_hash text, p_now timestamptz, p_user_id text,
-  p_user_name text, p_password_hash text, p_terms_version text
+  p_user_name text, p_password_hash text, p_terms_version text, p_source_ip text
 ) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -105,6 +107,7 @@ DECLARE
   v_count int;
   v_user text := p_user_id;
   v_kind text;
+  v_membership_id text;
 BEGIN
   SELECT * INTO inv FROM "Invitation"
    WHERE "tokenHash" = p_token_hash AND "acceptedAt" IS NULL AND "revokedAt" IS NULL AND "expiresAt" > p_now
@@ -132,17 +135,26 @@ BEGIN
 
   INSERT INTO "Membership" (id, "accountId", "userId", role)
   VALUES ('mem_' || replace(gen_random_uuid()::text, '-', ''), inv."accountId", v_user, inv.role)
-  ON CONFLICT ("accountId", "userId") DO NOTHING;
+  ON CONFLICT ("accountId", "userId") DO NOTHING
+  RETURNING id INTO v_membership_id;
 
   UPDATE "Invitation" SET "acceptedAt" = p_now WHERE id = inv.id;
 
-  INSERT INTO "AuditLog" (id, "accountId", "actorUserId", action, resource, "resourceId")
-  VALUES ('aud_' || replace(gen_random_uuid()::text, '-', ''), inv."accountId", v_user, 'INVITE_ACCEPTED', 'Invitation', inv.id);
+  INSERT INTO "AuditLog" (id, "accountId", "actorUserId", action, resource, "resourceId", details, ip)
+  VALUES ('aud_' || replace(gen_random_uuid()::text, '-', ''), inv."accountId", v_user, 'INVITE_ACCEPTED',
+          'Invitation', inv.id, jsonb_build_object('role', inv.role::text), p_source_ip);
+
+  IF v_membership_id IS NOT NULL THEN
+    INSERT INTO "AuditLog" (id, "accountId", "actorUserId", action, resource, "resourceId", details, ip)
+    VALUES ('aud_' || replace(gen_random_uuid()::text, '-', ''), inv."accountId", inv."invitedByUserId",
+            'MEMBER_ROLE_GRANTED', 'Membership', v_membership_id,
+            jsonb_build_object('role', inv.role::text), p_source_ip);
+  END IF;
 
   RETURN inv."accountId";
 END $$;
 
 REVOKE ALL ON FUNCTION invitation_peek(text, timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION invitation_accept(text, timestamptz, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION invitation_accept(text, timestamptz, text, text, text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION invitation_peek(text, timestamptz) TO suasnutri_app;
-GRANT EXECUTE ON FUNCTION invitation_accept(text, timestamptz, text, text, text, text) TO suasnutri_app;
+GRANT EXECUTE ON FUNCTION invitation_accept(text, timestamptz, text, text, text, text, text) TO suasnutri_app;

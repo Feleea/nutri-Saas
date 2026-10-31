@@ -6,8 +6,8 @@ export const POST = defineRoute({
   auth: 'session',
   action: 'team.manage',
   body: z.object({ email: z.string().max(254), role: z.enum(['PROFISSIONAL', 'SECRETARIA']) }),
-  handler: async ({ session, body }) => {
-    const r = await ctx().team.invite(session!, body.email, body.role);
+  handler: async ({ session, body, ip }) => {
+    const r = await ctx().team.invite(session!, body.email, body.role, ip);
     return r.ok ? reply({ invitationId: r.invitationId }, { status: 201 }) : failFrom(r.reason);
   },
 });

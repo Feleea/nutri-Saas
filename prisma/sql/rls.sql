@@ -27,6 +27,27 @@ GRANT SELECT, INSERT, UPDATE         ON "Plan", "Subscription"                  
 GRANT SELECT                         ON "UsageCounter", "PlatformAdmin"         TO suasnutri_admin;
 GRANT SELECT, INSERT                 ON "AdminAuditLog"                         TO suasnutri_admin;
 
+-- Tentativas de login sem vínculo com tenant, identidade ou e-mail. Escrita somente
+-- pela função estreita abaixo; os papéis não podem consultar nem inserir diretamente.
+ALTER TABLE "AuthAuditLog" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS auth_audit_insert ON "AuthAuditLog";
+
+CREATE OR REPLACE FUNCTION append_auth_audit(p_action text, p_source_ip text) RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+BEGIN
+  IF p_action NOT IN ('USER_LOGIN_FAILED', 'ADMIN_LOGIN_FAILED') THEN
+    RAISE EXCEPTION 'tipo de auditoria inválido';
+  END IF;
+  IF p_source_ip <> 'unknown' THEN
+    PERFORM p_source_ip::inet;
+  END IF;
+  INSERT INTO public."AuthAuditLog" ("id", "action", "sourceIp")
+  VALUES ('aud_' || replace(gen_random_uuid()::text, '-', ''), p_action, p_source_ip);
+  RETURN true;
+END $$;
+REVOKE ALL ON FUNCTION append_auth_audit(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION append_auth_audit(text, text) TO suasnutri_app, suasnutri_admin;
+
 -- ───────────── RLS: tabelas com accountId obrigatório ─────────────
 DO $$
 DECLARE t text;
@@ -90,6 +111,10 @@ CREATE TRIGGER audit_immutable BEFORE UPDATE OR DELETE ON "AuditLog"
 
 DROP TRIGGER IF EXISTS admin_audit_immutable ON "AdminAuditLog";
 CREATE TRIGGER admin_audit_immutable BEFORE UPDATE OR DELETE ON "AdminAuditLog"
+  FOR EACH ROW EXECUTE FUNCTION forbid_audit_mutation();
+
+DROP TRIGGER IF EXISTS auth_audit_immutable ON "AuthAuditLog";
+CREATE TRIGGER auth_audit_immutable BEFORE UPDATE OR DELETE ON "AuthAuditLog"
   FOR EACH ROW EXECUTE FUNCTION forbid_audit_mutation();
 
 -- ───────────── Contadores de uso (US-ADM-03) ─────────────

@@ -21,6 +21,7 @@ export default async function Paciente({ params }: { params: Promise<{ id: strin
     <main>
       <p><Link href="/pacientes">← Pacientes</Link></p>
       <h1>{p.fullName} {p.status === 'ARCHIVED' && <span className="badge">arquivado</span>}</h1>
+      {p.status === 'ACTIVE' && <p><Link className="btn secondary" href={`/pacientes/${id}/clinico`}>Anamnese e antropometria</Link></p>}
       {r.alerts.includes('consent_missing') && (
         <div className="card"><p className="error" role="alert">⚠ Consentimento LGPD deste paciente não registrado.</p></div>
       )}

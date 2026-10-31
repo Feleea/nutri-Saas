@@ -10,7 +10,7 @@ const ago = (days: number) => new Date(Date.now() - days * DAY);
 /** Dois tenants fixos com dados 100% sintéticos (A e B), usados em toda a suíte. */
 export async function seedTenants(db: PrismaClient) {
   await db.$executeRawUnsafe(
-    'TRUNCATE "Account","User","Plan","FoodTable","PlatformAdmin","PaymentEvent" RESTART IDENTITY CASCADE',
+    'TRUNCATE "Account","User","Plan","FoodTable","PlatformAdmin","PaymentEvent","AuthAuditLog" RESTART IDENTITY CASCADE',
   );
 
   const plan = await db.plan.create({

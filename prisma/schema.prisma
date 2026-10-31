@@ -52,6 +52,9 @@ model Account {
   units         Unit[]
   memberships   Membership[]
   patients      Patient[]
+  anamnesisTemplates AnamnesisTemplate[]
+  anamnesisRecords AnamnesisRecord[]
+  anthropometryRecords AnthropometryRecord[]
   subscription  Subscription?
   usageCounters UsageCounter[]
   auditLogs     AuditLog[]
@@ -192,9 +195,12 @@ model Patient {
   unit     Unit?            @relation(fields: [unitId], references: [id])
   consents PatientConsent[]
   appointments Appointment[]
+  anamneses AnamnesisRecord[]
+  anthropometry AnthropometryRecord[]
 
   @@index([accountId, status])
   @@index([accountId, cpf])
+  @@unique([id, accountId])
 }
 
 // ───────────── Conformidade ─────────────
@@ -220,12 +226,24 @@ model AuditLog {
   action      String
   resource    String
   resourceId  String?
+  details     Json?
   ip          String?
   createdAt   DateTime @default(now())
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId, createdAt])
+}
+
+// Eventos de autenticação sem identidade/e-mail: permitem registrar tentativas
+// desconhecidas e conhecidas com o mesmo formato e sem facilitar enumeração.
+model AuthAuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  sourceIp  String   @default("unknown") @db.VarChar(45)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // ───────────── Painel do dono (super-admin) ─────────────
@@ -463,6 +481,89 @@ model PatientConsent {
 
   @@index([patientId])
   @@index([accountId])
+}
+
+// Clinical records are tenant-scoped and contain sensitive health information.
+model AnamnesisTemplate {
+  id              String   @id @default(cuid())
+  accountId       String
+  name            String
+  currentVersion  Int      @default(1)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  account  Account                    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  versions AnamnesisTemplateVersion[]
+  records  AnamnesisRecord[]
+
+  @@unique([id, accountId])
+  @@index([accountId, updatedAt])
+}
+
+model AnamnesisTemplateVersion {
+  id              String   @id @default(cuid())
+  accountId       String
+  templateId      String
+  version         Int
+  name            String
+  fields          Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  template AnamnesisTemplate @relation(fields: [templateId, accountId], references: [id, accountId], onDelete: Cascade)
+  records  AnamnesisRecord[]
+
+  @@unique([templateId, version])
+  @@unique([id, accountId])
+  @@index([accountId, templateId])
+}
+
+model AnamnesisRecord {
+  id                String   @id @default(cuid())
+  accountId         String
+  patientId         String
+  templateId        String
+  templateVersionId String
+  templateVersion   Int
+  answers           Json
+  status            String   @default("DRAFT")
+  createdByUserId   String
+  updatedByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  completedAt       DateTime?
+
+  account         Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient         Patient                  @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+  template        AnamnesisTemplate        @relation(fields: [templateId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionSnapshot AnamnesisTemplateVersion @relation(fields: [templateVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+
+  @@unique([id, accountId])
+  @@index([accountId, patientId, createdAt])
+  @@index([accountId, templateId])
+}
+
+model AnthropometryRecord {
+  id              String   @id @default(cuid())
+  accountId       String
+  patientId       String
+  measuredAt      DateTime
+  weightKg        Decimal  @db.Decimal(6, 2)
+  heightCm        Decimal  @db.Decimal(6, 2)
+  bmi             Decimal  @db.Decimal(5, 1)
+  waistCm         Decimal? @db.Decimal(6, 2)
+  hipCm           Decimal? @db.Decimal(6, 2)
+  neckCm          Decimal? @db.Decimal(6, 2)
+  armCm           Decimal? @db.Decimal(6, 2)
+  thighCm         Decimal? @db.Decimal(6, 2)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient Patient @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  @@index([accountId, patientId, measuredAt])
 }
 
 // Avisos dentro da plataforma (ex.: 80% do limite de pacientes). Um por tipo enquanto a condição persistir.

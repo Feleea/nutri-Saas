@@ -13,9 +13,9 @@ export const POST = defineRoute({
     acceptPrivacy: z.boolean().optional(),
     acceptDpa: z.boolean().optional(),
   }),
-  handler: async ({ body }) => {
+  handler: async ({ body, ip }) => {
     const { token, ...input } = body;
-    const r = await ctx().team.acceptInvite(token, input);
+    const r = await ctx().team.acceptInvite(token, input, ip);
     return r.ok ? { accountId: r.accountId, role: r.role } : failFrom(r.reason);
   },
 });

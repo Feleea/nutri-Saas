@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma, type AccountStatus } from '@prisma/client';
 import type { createAdminAuthService } from '../auth/admin';
+import { auditOrigin } from '../auth/audit';
 
 export type PatientBand = '0-30' | '31-100' | '101-300' | '300+';
 export interface TenantFilters {
@@ -133,18 +134,18 @@ export function createAdminPanel({ db, adminAuth, now = () => new Date() }: Deps
   }
 
   // ───────────── Ativação e suspensão (sempre auditadas) ─────────────
-  async function suspendAccount(token: string, accountId: string, reason: string) {
+  async function suspendAccount(token: string, accountId: string, reason: string, sourceIp = 'unknown') {
     const adminId = await guard(token);
     if (!adminId) return UNAUTH;
     if (!reason?.trim()) return { ok: false as const, reason: 'reason_required' as const };
     const r = await db.account.updateMany({ where: { id: accountId, status: { not: 'SUSPENDED' } }, data: { status: 'SUSPENDED' } });
     if (r.count !== 1) return { ok: false as const, reason: 'not_applicable' as const };
     await db.tenantEvent.create({ data: { accountId, kind: 'SUSPENDED', details: { reason }, createdAt: now() } });
-    await audit(adminId, 'ACCOUNT_SUSPENDED', accountId, { reason });
+    await audit(adminId, 'ACCOUNT_SUSPENDED', accountId, { reason, sourceIp: auditOrigin(sourceIp) });
     return { ok: true as const };
   }
 
-  async function reactivateAccount(token: string, accountId: string) {
+  async function reactivateAccount(token: string, accountId: string, sourceIp = 'unknown') {
     const adminId = await guard(token);
     if (!adminId) return UNAUTH;
     const a = await db.account.findUnique({ where: { id: accountId }, include: { subscription: true } });
@@ -152,7 +153,7 @@ export function createAdminPanel({ db, adminAuth, now = () => new Date() }: Deps
     const back = a.subscription && ['ACTIVE', 'PAST_DUE', 'TRIAL'].includes(a.subscription.status) ? a.subscription.status : 'TRIAL';
     await db.account.update({ where: { id: accountId }, data: { status: back } });
     await db.tenantEvent.create({ data: { accountId, kind: 'REACTIVATED', details: { status: back }, createdAt: now() } });
-    await audit(adminId, 'ACCOUNT_REACTIVATED', accountId, { status: back });
+    await audit(adminId, 'ACCOUNT_REACTIVATED', accountId, { status: back, sourceIp: auditOrigin(sourceIp) });
     return { ok: true as const, status: back };
   }
 

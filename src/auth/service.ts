@@ -5,6 +5,7 @@ import { encryptSecret, decryptSecret } from '../crypto/secrets';
 import { generateSecret, otpauthUri, verifyTotp, generateRecoveryCodes, normalizeRecoveryCode } from './totp';
 import type { Mailer } from './mailer';
 import { appUrl } from './links';
+import { auditOrigin } from './audit';
 
 export const TERMS_VERSION = '2026-10-v1';
 
@@ -92,10 +93,17 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
     }
   }
 
-  async function startSession(userId: string): Promise<LoginResult> {
+  async function recordLoginFailure(sourceIp: string) {
+    await db.$queryRaw<boolean[]>`SELECT append_auth_audit('USER_LOGIN_FAILED', ${auditOrigin(sourceIp)})`;
+  }
+
+  async function startSession(userId: string, sourceIp: string): Promise<LoginResult> {
     const [m] = await db.$queryRaw<{ account_id: string; role: string }[]>`
       SELECT account_id, role FROM auth_memberships(${userId})`;
-    if (!m) return INVALID;
+    if (!m) {
+      await recordLoginFailure(sourceIp);
+      return INVALID;
+    }
     const { token, hash } = newToken();
     await db.session.create({
       data: { tokenHash: hash, userId, accountId: m.account_id, createdAt: now(), lastSeenAt: now() },
@@ -103,7 +111,7 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
     const tenant = forTenant(m.account_id, userId, db);
     await tenant.account.update({ where: { id: m.account_id }, data: { lastAccessAt: now() } });
     await tenant.auditLog.create({
-      data: { accountId: m.account_id, actorUserId: userId, action: 'LOGIN', resource: 'session' },
+      data: { accountId: m.account_id, actorUserId: userId, action: 'LOGIN', resource: 'session', ip: auditOrigin(sourceIp) },
     });
     return { ok: true, token, accountId: m.account_id, role: m.role };
   }
@@ -153,40 +161,57 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
   }
 
   // ───────────── Login e sessão (US-AUT-02 / US-AUT-04) ─────────────
-  async function login(emailRaw: string, password: string): Promise<LoginResult> {
+  async function login(emailRaw: string, password: string, sourceIp = 'unknown'): Promise<LoginResult> {
     const email = emailRaw.trim().toLowerCase();
     const user = await db.user.findUnique({ where: { email } });
 
     if (!user) {
       dummyHash ??= hashPassword('dummy-password-0');
       await verifyPassword(password, await dummyHash); // iguala o tempo de resposta
+      await recordLoginFailure(sourceIp);
       return INVALID;
     }
-    if (user.lockedUntil && user.lockedUntil > now()) return INVALID;
+    if (user.lockedUntil && user.lockedUntil > now()) {
+      await recordLoginFailure(sourceIp);
+      return INVALID;
+    }
     if (!(await verifyPassword(password, user.passwordHash))) {
+      await recordLoginFailure(sourceIp);
       await registerFailure(user);
       return INVALID;
     }
     if (user.failedLogins || user.lockedUntil) {
       await db.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null } });
     }
-    if (!user.emailVerifiedAt) return { ok: false, reason: 'email_not_verified' };
+    if (!user.emailVerifiedAt) {
+      await recordLoginFailure(sourceIp);
+      return { ok: false, reason: 'email_not_verified' };
+    }
 
     // Com 2FA ativo, a senha sozinha NÃO cria sessão: devolve um desafio de curta duração.
     if (user.totpEnabledAt) {
       const challenge = await issueToken(user.id, 'MFA', config.mfaChallengeMinutes);
       return { ok: false, reason: 'mfa_required', challenge };
     }
-    return startSession(user.id);
+    return startSession(user.id, sourceIp);
   }
 
   /** Segundo passo: código do app autenticador OU código de recuperação (uso único). */
-  async function verifyMfa(challenge: string, code: string): Promise<LoginResult> {
+  async function verifyMfa(challenge: string, code: string, sourceIp = 'unknown'): Promise<LoginResult> {
     const row = await db.emailToken.findUnique({ where: { tokenHash: hashToken(challenge) } });
-    if (!row || row.kind !== 'MFA' || row.usedAt || row.expiresAt <= now()) return INVALID;
+    if (!row || row.kind !== 'MFA' || row.usedAt || row.expiresAt <= now()) {
+      await recordLoginFailure(sourceIp);
+      return INVALID;
+    }
     const user = await db.user.findUnique({ where: { id: row.userId } });
-    if (!user || !user.totpSecret || !user.totpEnabledAt) return INVALID;
-    if (user.lockedUntil && user.lockedUntil > now()) return INVALID;
+    if (!user || !user.totpSecret || !user.totpEnabledAt) {
+      await recordLoginFailure(sourceIp);
+      return INVALID;
+    }
+    if (user.lockedUntil && user.lockedUntil > now()) {
+      await recordLoginFailure(sourceIp);
+      return INVALID;
+    }
 
     let ok = false;
     const step = verifyTotp(decryptSecret(user.totpSecret), code.trim(), now().getTime(), user.totpLastStep);
@@ -206,12 +231,13 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
     }
 
     if (!ok) {
+      await recordLoginFailure(sourceIp);
       await registerFailure(user); // 2FA também conta para o bloqueio (evita força bruta)
       return INVALID;
     }
     await db.emailToken.update({ where: { id: row.id }, data: { usedAt: now() } });
     await db.user.update({ where: { id: user.id }, data: { failedLogins: 0 } });
-    return startSession(user.id);
+    return startSession(user.id, sourceIp);
   }
 
   async function validateSession(token: string): Promise<SessionInfo | null> {

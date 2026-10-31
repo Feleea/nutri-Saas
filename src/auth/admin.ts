@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { verifyPassword, hashPassword, newToken, hashToken } from './password';
 import { decryptSecret } from '../crypto/secrets';
 import { verifyTotp } from './totp';
+import { auditOrigin } from './audit';
 
 export const ADMIN_AUTH_CONFIG = { maxFailedLogins: 5, lockMinutes: 15, sessionIdleMinutes: 15 };
 const MIN = 60_000;
@@ -22,19 +23,28 @@ export function createAdminAuthService({ db, now = () => new Date(), config = AD
   const FAIL = { ok: false, reason: 'invalid_credentials' } as const;
   let dummyHash: Promise<string> | undefined;
 
-  async function login(emailRaw: string, password: string, totpCode: string): Promise<AdminLoginResult> {
+  async function recordLoginFailure(sourceIp: string) {
+    await db.$queryRaw<boolean[]>`SELECT append_auth_audit('ADMIN_LOGIN_FAILED', ${auditOrigin(sourceIp)})`;
+  }
+
+  async function login(emailRaw: string, password: string, totpCode: string, sourceIp = 'unknown'): Promise<AdminLoginResult> {
     const admin = await db.platformAdmin.findUnique({ where: { email: emailRaw.trim().toLowerCase() } });
     if (!admin) {
       dummyHash ??= hashPassword('dummy-password-0');
       await verifyPassword(password, await dummyHash);
+      await recordLoginFailure(sourceIp);
       return FAIL;
     }
-    if (admin.lockedUntil && admin.lockedUntil > now()) return FAIL;
+    if (admin.lockedUntil && admin.lockedUntil > now()) {
+      await recordLoginFailure(sourceIp);
+      return FAIL;
+    }
 
     const passwordOk = await verifyPassword(password, admin.passwordHash);
     const step = verifyTotp(decryptSecret(admin.totpSecret), totpCode.trim(), now().getTime(), admin.totpLastStep);
 
     if (!passwordOk || step === null) {
+      await recordLoginFailure(sourceIp);
       const updated = await db.platformAdmin.update({ where: { id: admin.id }, data: { failedLogins: { increment: 1 } } });
       if (updated.failedLogins >= config.maxFailedLogins) {
         await db.platformAdmin.update({
@@ -49,11 +59,16 @@ export function createAdminAuthService({ db, now = () => new Date(), config = AD
       where: { id: admin.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
       data: { totpLastStep: step, failedLogins: 0 },
     });
-    if (upd.count !== 1) return FAIL; // código reutilizado em paralelo
+    if (upd.count !== 1) {
+      await recordLoginFailure(sourceIp);
+      return FAIL; // código reutilizado em paralelo
+    }
 
     const { token, hash } = newToken();
     await db.adminSession.create({ data: { tokenHash: hash, adminId: admin.id, createdAt: now(), lastSeenAt: now() } });
-    await db.adminAuditLog.create({ data: { adminId: admin.id, action: 'ADMIN_LOGIN' } });
+    await db.adminAuditLog.create({
+      data: { adminId: admin.id, action: 'ADMIN_LOGIN', details: { sourceIp: auditOrigin(sourceIp) } },
+    });
     return { ok: true, token };
   }
 

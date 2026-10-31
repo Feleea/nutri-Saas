@@ -17,3 +17,10 @@ ALTER TABLE "DeletionLedger" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON "DeletionLedger";
 CREATE POLICY tenant_isolation ON "DeletionLedger" TO suasnutri_app
   USING ("accountId" = app_account_id()) WITH CHECK ("accountId" = app_account_id());
+
+-- Composição de receitas: leitura e criação limitadas ao tenant.
+GRANT SELECT, INSERT ON "RecipeIngredient" TO suasnutri_app;
+ALTER TABLE "RecipeIngredient" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "RecipeIngredient";
+CREATE POLICY tenant_isolation ON "RecipeIngredient" TO suasnutri_app
+  USING ("accountId" = app_account_id()) WITH CHECK ("accountId" = app_account_id());

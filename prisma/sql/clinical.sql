@@ -4,6 +4,7 @@ GRANT SELECT, INSERT ON "AnamnesisTemplateVersion" TO suasnutri_app;
 GRANT SELECT, INSERT, UPDATE ON "AnamnesisRecord" TO suasnutri_app;
 GRANT SELECT, INSERT ON "AnthropometryRecord" TO suasnutri_app;
 GRANT SELECT, INSERT, UPDATE ON "TenantDataEncryptionKey" TO suasnutri_app;
+GRANT SELECT, INSERT ON "MealPlan", "MealPlanVersion", "MealPlanMeal", "MealPlanItem" TO suasnutri_app;
 
 DO $$
 DECLARE t text;

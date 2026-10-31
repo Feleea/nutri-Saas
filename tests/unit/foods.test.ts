@@ -8,6 +8,7 @@ import { parseCsv, parseDecimal } from '../../src/foods/import';
 describe('US-ALI-02 · busca [unit]', () => {
   it('ignora acentos, maiúsculas e espaços extras', () => {
     expect(normalizeName('  FEIJÃO   Carioca ')).toBe('feijao carioca');
+    expect(normalizeName('Arroz, integral')).toBe('arroz integral');
   });
   it('expande sinônimos regionais', () => {
     expect(expandTerm('mandioca')).toEqual(expect.arrayContaining(['mandioca', 'aipim', 'macaxeira']));

@@ -66,7 +66,7 @@ export interface ImportReport {
 export async function importFoodTable(db: PrismaClient, input: ImportInput): Promise<ImportReport> {
   if (!input.license?.trim()) throw new Error('license_required');
   const rows = parseCsv(input.csv);
-  const header = (rows[0] ?? []).map((h) => normalizeName(h));
+  const header = (rows[0] ?? []).map((h) => normalizeName(h).replace(/ /g, '_'));
   const idx = (name: string) => header.indexOf(name);
   if (idx('codigo') < 0 || idx('nome') < 0) throw new Error('cabecalho_invalido: faltam codigo/nome');
 

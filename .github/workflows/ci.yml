@@ -40,5 +40,7 @@ jobs:
         run: npx next build
       - name: Testes unitários
         run: npm run test:unit
+      - name: Testes de API
+        run: npx vitest run tests/api
       - name: Testes de isolamento e permissões (bloqueiam o PR)
         run: npm run test:security

@@ -1,7 +1,7 @@
 # Suas Nutri
 
 > **Documentação:** plano e andamento em [`docs/plano-de-desenvolvimento.md`](docs/plano-de-desenvolvimento.md) (seção 15) · checklist do gate G0 em [`docs/gate-g0.md`](docs/gate-g0.md) · como validar o código em [`docs/validacao-passo-0.md`](docs/validacao-passo-0.md) · política de retenção e backup em [`docs/politica-retencao-backup.md`](docs/politica-retencao-backup.md).
-> **Situação:** código e testes escritos, **ainda não executados em ambiente real**. Comece pelo Passo 0.
+> **Situação (31/10/2026):** validação local em PostgreSQL 16 concluída: 309 testes, typecheck, build e restore passaram. O CI ainda precisa ser executado; o Gate G0 continua bloqueado por decisões de gateway, licenças de dados e revisão jurídica.
 
 SaaS multi-tenant para nutricionistas (clínico e produção/qualidade). Stack: TypeScript, PostgreSQL 16, Prisma, Vitest, GitHub Actions.
 Este repositório implementa a **Fase 0 (Fundação)** do plano, começando por isolamento de tenants e painel do dono.
@@ -18,13 +18,12 @@ Este repositório implementa a **Fase 0 (Fundação)** do plano, começando por 
 cp .env.example .env
 npm install
 npm run db:up                    # Postgres + papéis (docker/init-roles.sql)
-npx prisma migrate dev --name init   # gera a migration inicial a partir do schema
-npm run db:rls                   # aplica RLS, GRANTs, triggers e função de contadores
+npm run db:setup                 # aplica migrations e RLS, GRANTs, triggers e funções
 npm run db:seed                  # tenants sintéticos A e B
 npm test
 ```
+**Atenção:** `npm test` e `npm run db:seed` limpam tabelas centrais e recriam dados sintéticos. Use somente um banco descartável, nunca o banco de produção ou com dados reais.
 Depois de qualquer `migrate dev`/`reset`, rode `npm run db:rls` (ou use `npm run db:setup` / `npm run db:reset`).
-Quando o schema estabilizar, mova `prisma/sql/rls.sql` para uma migration (`prisma migrate dev --create-only`) para que o deploy aplique tudo em uma etapa.
 
 ## Estrutura
 - `prisma/schema.prisma`: Conta → Unidade → Usuário/Membership, planos, assinatura, contadores, pacientes, auditoria, alimentos.

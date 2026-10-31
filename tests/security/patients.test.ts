@@ -152,8 +152,8 @@ describe('US-PAC-02 · buscar e filtrar [api][e2e]', () => {
       seen.push(...r.items.map((p) => p.id));
       cursor = r.nextCursor ?? undefined;
     } while (cursor);
-    expect(seen).toHaveLength(450); // ativos
-    expect(new Set(seen).size).toBe(450);
+    expect(seen).toHaveLength(490); // 500 pacientes menos 10 arquivados
+    expect(new Set(seen).size).toBe(490);
   });
 });
 

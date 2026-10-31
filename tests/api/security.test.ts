@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { seedTenants } from '../../prisma/seed-data';
@@ -58,7 +58,7 @@ describe('Inventário de rotas · nenhuma rota sai sem autenticação declarada 
     const problems: string[] = [];
     for (const f of files) {
       const mod = await import(/* @vite-ignore */ f);
-      const rel = relative(root, f);
+      const rel = relative(root, f).split(sep).join('/');
       const handlers = Object.entries(mod).filter(([k]) => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(k));
       if (!handlers.length) problems.push(`${rel}: sem handler HTTP`);
       for (const [method, h] of handlers) {
@@ -76,7 +76,7 @@ describe('Inventário de rotas · nenhuma rota sai sem autenticação declarada 
     const odd: string[] = [];
     for (const f of files) {
       const mod = await import(/* @vite-ignore */ f);
-      const rel = relative(root, f);
+      const rel = relative(root, f).split(sep).join('/');
       for (const [k, h] of Object.entries(mod)) {
         const auth = (h as { meta?: { auth?: string } }).meta?.auth;
         if (!auth) continue;

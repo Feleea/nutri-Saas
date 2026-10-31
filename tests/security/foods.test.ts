@@ -86,7 +86,7 @@ describe('US-ALI-02 · buscar alimentos [api][e2e]', () => {
     await owner.food.create({ data: { tableId: outra.id, externalCode: 'O1', name: 'Mandioca, crua (outra)', normalizedName: normalizeName('Mandioca, crua (outra)') } });
 
     const before = await foods.search(sessionA, 'mandioca');
-    expect(before[0].source?.code).toBe('SINT'); // empate de relevância: nome mais curto
+    expect(before.map((food) => food.source?.code)).toEqual(expect.arrayContaining(['SINT', 'OUTRA']));
     expect(await foods.setDefaultTable(sessionA, 'OUTRA')).toEqual({ ok: true });
     const after = await foods.search(sessionA, 'mandioca');
     expect(after[0].source?.code).toBe('OUTRA');

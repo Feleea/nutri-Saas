@@ -7,17 +7,25 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "prisma migrate dev",
-    "db:rls": "prisma db execute --file prisma/sql/rls.sql --schema prisma/schema.prisma",
+    "db:rls": "prisma db execute --file prisma/sql/rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/auth.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/billing.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/foods-lgpd.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/patients.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/agenda.sql --schema prisma/schema.prisma",
     "db:setup": "prisma migrate deploy && npm run db:rls",
     "db:reset": "prisma migrate reset --force --skip-seed && npm run db:rls && npm run db:seed",
     "db:seed": "tsx prisma/seed.ts",
+    "foods:import": "tsx scripts/import-foods.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:security": "vitest run tests/security",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "dependencies": {
-    "@prisma/client": "^6.0.0"
+    "@prisma/client": "^6.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -25,6 +33,8 @@
     "prisma": "^6.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
   }
 }

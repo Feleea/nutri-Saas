@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { normalizeName } from '../src/foods/normalize';
 
 export const TENANT_A = 'tenant_a';
 export const TENANT_B = 'tenant_b';
@@ -9,7 +10,7 @@ const ago = (days: number) => new Date(Date.now() - days * DAY);
 /** Dois tenants fixos com dados 100% sintéticos (A e B), usados em toda a suíte. */
 export async function seedTenants(db: PrismaClient) {
   await db.$executeRawUnsafe(
-    'TRUNCATE "Account","User","Plan","FoodTable" RESTART IDENTITY CASCADE',
+    'TRUNCATE "Account","User","Plan","FoodTable","PlatformAdmin","PaymentEvent" RESTART IDENTITY CASCADE',
   );
 
   const plan = await db.plan.create({
@@ -26,6 +27,10 @@ export async function seedTenants(db: PrismaClient) {
     },
   });
 
+  await db.plan.create({
+    data: { id: 'plan_trial', code: 'trial', name: 'Trial 14 dias', priceCents: 0, modules: ['CLINICO'], patientLimit: 15, userLimit: 1, storageMb: 100 },
+  });
+
   for (const [id, name, email] of [
     [TENANT_A, 'Nutri A (sintético)', 'a@example.test'],
     [TENANT_B, 'Nutri B (sintético)', 'b@example.test'],
@@ -40,14 +45,13 @@ export async function seedTenants(db: PrismaClient) {
     });
   }
 
-  await db.patient.createMany({
-    data: [
+  const patients: Prisma.PatientCreateManyInput[] = [
       { id: 'pat_a1', accountId: TENANT_A, fullName: 'Paciente A1', lastActivityAt: ago(1) },
       { id: 'pat_a2', accountId: TENANT_A, fullName: 'Paciente A2', lastActivityAt: ago(10) },
       { id: 'pat_a3', accountId: TENANT_A, fullName: 'Paciente A3 (inativo)', lastActivityAt: ago(200) },
       { id: 'pat_a4', accountId: TENANT_A, fullName: 'Paciente A4 (arquivado)', status: 'ARCHIVED', archivedAt: ago(5) },
       { id: 'pat_b1', accountId: TENANT_B, fullName: 'Paciente B1', lastActivityAt: ago(2) },
       { id: 'pat_b2', accountId: TENANT_B, fullName: 'Paciente B2', lastActivityAt: ago(3) },
-    ],
-  });
+  ];
+  await db.patient.createMany({ data: patients.map((p) => ({ ...p, normalizedName: normalizeName(p.fullName) })) });
 }

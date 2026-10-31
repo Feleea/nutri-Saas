@@ -22,6 +22,9 @@ jobs:
       DATABASE_URL_OWNER: postgresql://suasnutri_owner:owner_dev_pw@localhost:5432/suasnutri
       DATABASE_URL: postgresql://suasnutri_app:app_dev_pw@localhost:5432/suasnutri
       DATABASE_URL_ADMIN: postgresql://suasnutri_admin:admin_dev_pw@localhost:5432/suasnutri
+      GATEWAY_WEBHOOK_SECRET: segredo-ci
+      MAIL_DRIVER: memory
+      APP_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,6 +36,8 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npm run db:rls
       - run: npm run typecheck
+      - name: Build (Next.js)
+        run: npx next build
       - name: Testes unitários
         run: npm run test:unit
       - name: Testes de isolamento e permissões (bloqueiam o PR)

@@ -1,13 +1,18 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "preserve",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./*"] },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "tests", "prisma/*.ts", "vitest.config.ts"]
+  "include": ["next-env.d.ts", "app", "src", "tests", "scripts", "prisma/*.ts", "vitest.config.ts", ".next/types/**/*.ts"]
 }

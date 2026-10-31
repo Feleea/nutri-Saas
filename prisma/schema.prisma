@@ -44,6 +44,10 @@ model Account {
   trialEndsAt  DateTime?
   createdAt    DateTime      @default(now())
   lastAccessAt DateTime?
+  defaultFoodTableId String? // tabela de referência padrão (TACO, TBCA...)
+  timezone                 String @default("America/Sao_Paulo") // fuso usado na agenda e nos lembretes
+  defaultAppointmentMinutes Int   @default(50)
+  reminderLeadHours        Int    @default(24)
 
   units         Unit[]
   memberships   Membership[]
@@ -53,6 +57,16 @@ model Account {
   auditLogs     AuditLog[]
   terms         TermsAcceptance[]
   foods         Food[]
+  invitations   Invitation[]
+  invoices      Invoice[]
+  events        TenantEvent[]
+  dataExports   DataExport[]
+  deletions     DeletionLedger[]
+  notices       Notice[]
+  patientConsents PatientConsent[]
+  appointments  Appointment[]
+  appointmentHistory AppointmentHistory[]
+  reminders     Reminder[]
 }
 
 model Unit {
@@ -76,13 +90,19 @@ model User {
   passwordHash    String
   name            String
   emailVerifiedAt DateTime?
-  totpSecret      String? // cifrado na aplicação
+  totpSecret      String? // cifrado na aplicação (AES-256-GCM)
+  totpEnabledAt   DateTime?
+  totpLastStep    Int? // último passo TOTP aceito: impede reutilização do código
   failedLogins    Int       @default(0)
   lockedUntil     DateTime?
   createdAt       DateTime  @default(now())
 
   memberships Membership[]
   terms       TermsAcceptance[]
+  sessions      Session[]
+  appointmentsAsProfessional Appointment[] @relation("AppointmentProfessional")
+  emailTokens   EmailToken[]
+  recoveryCodes RecoveryCode[]
 }
 
 model Membership {
@@ -125,6 +145,9 @@ model Subscription {
   status           AccountStatus @default(TRIAL)
   currentPeriodEnd DateTime?
   gatewayRef       String?
+  priceCents       Int           @default(0) // valor contratado; só muda na renovação
+  pendingPlanId    String? // plano em checkout, ativado quando o gateway confirmar o pagamento
+  graceEndsAt      DateTime? // fim da carência em caso de atraso
   createdAt        DateTime      @default(now())
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -160,9 +183,15 @@ model Patient {
   lastActivityAt DateTime      @default(now())
   createdAt      DateTime      @default(now())
   archivedAt     DateTime?
+  normalizedName String        @default("") // sem acentos e minúsculo, para busca
+  goal           String?
+  tags           String[]      @default([])
+  remindersOptOut Boolean      @default(false) // paciente pediu para não receber lembretes
 
-  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  unit    Unit?   @relation(fields: [unitId], references: [id])
+  account  Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  unit     Unit?            @relation(fields: [unitId], references: [id])
+  consents PatientConsent[]
+  appointments Appointment[]
 
   @@index([accountId, status])
   @@index([accountId, cpf])
@@ -204,10 +233,14 @@ model PlatformAdmin {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
-  totpSecret   String // 2FA obrigatório
-  createdAt    DateTime @default(now())
+  totpSecret   String // 2FA obrigatório (cifrado), sem opção de desativar
+  totpLastStep Int?
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime  @default(now())
 
-  actions AdminAuditLog[]
+  actions  AdminAuditLog[]
+  sessions AdminSession[]
 }
 
 model AdminAuditLog {
@@ -269,4 +302,261 @@ model HouseholdMeasure {
   food Food @relation(fields: [foodId], references: [id], onDelete: Cascade)
 
   @@index([foodId])
+}
+
+// ───────────── Autenticação ─────────────
+// Sessões no servidor: logout e expiração valem imediatamente.
+// Só o hash do token é guardado.
+model Session {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  accountId  String
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Tokens de uso único (confirmação de e-mail; depois, recuperação de senha).
+model EmailToken {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // VERIFY | RESET | MFA (desafio de 2FA pós-senha)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+}
+
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AdminSession {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  adminId    String
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+}
+
+// ───────────── Equipe e cobrança ─────────────
+model Invitation {
+  id              String    @id @default(cuid())
+  accountId       String
+  email           String
+  role            Role // nunca TITULAR (validado na aplicação)
+  tokenHash       String    @unique
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model Invoice {
+  id          String    @id @default(cuid())
+  accountId   String
+  amountCents Int
+  status      String // PAID | OPEN | FAILED
+  paidAt      DateTime?
+  note        String?
+  createdAt   DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+// Idempotência dos webhooks do gateway (e de avisos únicos): gatewayEventId é único.
+model PaymentEvent {
+  id             String   @id @default(cuid())
+  gatewayEventId String   @unique
+  type           String
+  accountId      String?
+  processedAt    DateTime @default(now())
+}
+
+// Linha do tempo do tenant no painel do dono (somente eventos de conta/cobrança).
+model TenantEvent {
+  id        String   @id @default(cuid())
+  accountId String
+  kind      String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+// ───────────── LGPD ─────────────
+// Exportação cifrada em repouso, acessível só por link com expiração e por usuários do tenant.
+model DataExport {
+  id              String   @id @default(cuid())
+  accountId       String
+  patientId       String?
+  kind            String // PATIENT
+  tokenHash       String   @unique
+  payloadEnc      String   @db.Text
+  expiresAt       DateTime
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+// Registro de exclusões SEM dados pessoais: permite reaplicar a exclusão após restaurar um backup.
+model DeletionLedger {
+  id        String   @id @default(cuid())
+  accountId String
+  patientId String
+  mode      String // DELETE | ANONYMIZE
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+// ───────────── Fase 1: pacientes ─────────────
+// Consentimento do paciente para o tratamento dos dados (LGPD): data e versão do termo.
+model PatientConsent {
+  id               String    @id @default(cuid())
+  accountId        String
+  patientId        String
+  kind             String    @default("DATA_PROCESSING")
+  version          String
+  grantedAt        DateTime  @default(now())
+  revokedAt        DateTime?
+  recordedByUserId String
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([accountId])
+}
+
+// Avisos dentro da plataforma (ex.: 80% do limite de pacientes). Um por tipo enquanto a condição persistir.
+model Notice {
+  id        String    @id @default(cuid())
+  accountId String
+  kind      String // LIMIT_80 | LIMIT_100
+  message   String
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, kind])
+}
+
+// ───────────── Fase 1: agenda ─────────────
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELED
+  NO_SHOW
+}
+
+enum ReminderStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+  CANCELED
+}
+
+// Horários em UTC; a exibição usa o fuso da conta. Sem anotações clínicas: a secretária pode ver tudo daqui.
+model Appointment {
+  id                 String            @id @default(cuid())
+  accountId          String
+  patientId          String
+  professionalUserId String
+  startsAt           DateTime
+  endsAt             DateTime
+  status             AppointmentStatus @default(SCHEDULED)
+  online             Boolean           @default(false)
+  meetingUrl         String?
+  cancelReason       String?
+  createdByUserId    String
+  createdAt          DateTime          @default(now())
+
+  account      Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient      Patient              @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  professional User                 @relation("AppointmentProfessional", fields: [professionalUserId], references: [id])
+  history      AppointmentHistory[]
+  reminders    Reminder[]
+
+  @@index([accountId, startsAt])
+  @@index([patientId])
+  @@index([professionalUserId, startsAt])
+}
+
+model AppointmentHistory {
+  id               String    @id @default(cuid())
+  accountId        String
+  appointmentId    String
+  kind             String // RESCHEDULED | CANCELED | STATUS
+  previousStartsAt DateTime?
+  previousEndsAt   DateTime?
+  reason           String?
+  byUserId         String
+  at               DateTime  @default(now())
+
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+}
+
+model Reminder {
+  id            String         @id @default(cuid())
+  accountId     String
+  appointmentId String
+  channel       String         @default("EMAIL")
+  sendAt        DateTime
+  status        ReminderStatus @default(PENDING)
+  attempts      Int            @default(0)
+  lastError     String?
+  skipReason    String? // no_email | opt_out | too_late | rescheduled | canceled | patient_archived ...
+  claimedAt     DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime       @default(now())
+
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([status, sendAt])
+  @@index([appointmentId])
 }

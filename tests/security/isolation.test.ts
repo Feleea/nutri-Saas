@@ -75,7 +75,7 @@ describe('US-SEC-01 · isolamento entre tenants [seg]', () => {
 });
 
 describe('US-ADM-00 / US-ADM-01 · super-admin sem acesso clínico [seg]', () => {
-  const clinical = ['Patient', 'Unit', 'Membership', 'User', 'TermsAcceptance', 'AuditLog', 'Food', 'HouseholdMeasure'];
+  const clinical = ['Patient', 'Unit', 'Membership', 'User', 'TermsAcceptance', 'AuditLog', 'Food', 'HouseholdMeasure', 'Session', 'EmailToken', 'RecoveryCode', 'Invitation'];
 
   it.each(clinical)('super-admin recebe acesso negado em "%s"', async (table) => {
     await expect(adminPrisma.$queryRawUnsafe(`SELECT * FROM "${table}" LIMIT 1`)).rejects.toThrow(

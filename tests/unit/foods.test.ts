@@ -4,6 +4,7 @@ import { expandTerm } from '../../src/foods/synonyms';
 import { validateFoodValues, toPer100g } from '../../src/foods/validate';
 import { offeredMeasures, toGrams } from '../../src/foods/measures';
 import { parseCsv, parseDecimal } from '../../src/foods/import';
+import { calculateRecipeNutrition } from '../../src/foods/recipes';
 
 describe('US-ALI-02 · busca [unit]', () => {
   it('ignora acentos, maiúsculas e espaços extras', () => {
@@ -48,6 +49,28 @@ describe('US-ALI-04 · medidas caseiras [unit]', () => {
   });
   it('recusa quantidade inválida', () => {
     expect(() => toGrams(-1)).toThrow();
+  });
+});
+
+describe('US-PLA-04 · receita com rendimento [unit]', () => {
+  it('soma ingredientes na quantidade usada e converte o resultado ao rendimento', () => {
+    expect(calculateRecipeNutrition([
+      { foodId: 'a', name: 'Aveia', grams: 50, nutrients: { energyKcal: 380, proteinG: 10, calciumMg: 20 } },
+      { foodId: 'b', name: 'Leite', grams: 200, nutrients: { energyKcal: 60, proteinG: 3, calciumMg: null } },
+    ], 200)).toEqual({
+      values: { energyKcal: 155, proteinG: 5.5, carbG: null, fatG: null, fiberG: null },
+      micros: {},
+    });
+  });
+
+  it('não transforma nutrientes desconhecidos em zero e valida rendimento', () => {
+    expect(calculateRecipeNutrition([
+      { foodId: 'a', name: 'Alimento', grams: 100, nutrients: { energyKcal: null, calciumMg: 10 } },
+    ], 100)).toEqual({
+      values: { energyKcal: null, proteinG: null, carbG: null, fatG: null, fiberG: null },
+      micros: { calciumMg: 10 },
+    });
+    expect(() => calculateRecipeNutrition([], 100)).toThrow('recipe_input_invalid');
   });
 });
 

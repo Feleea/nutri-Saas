@@ -152,6 +152,42 @@ describe('US-ALI-04 · medidas caseiras [unit][e2e][seg]', () => {
     expect(await foods.getMeasures(sessionA, s005.id)).toEqual([{ label: 'g', grams: 1 }]);
   });
 
+  describe('US-PLA-04 · receitas próprias [seg][api]', () => {
+    it('calcula valores por rendimento, salva composição e mantém a receita no tenant', async () => {
+      const ingredientFood = await owner.food.findFirstOrThrow({ where: { externalCode: 'S003' } });
+      const r = await foods.createRecipe(sessionA, {
+        name: 'Receita teste de tenant A',
+        yieldGrams: 100,
+        ingredients: [{ foodId: ingredientFood.id, grams: 100 }],
+      });
+      if (!r.ok) throw new Error(JSON.stringify(r));
+      expect(r.food.accountId).toBe(TENANT_A);
+      expect(Number(r.food.energyKcal)).toBe(125);
+      expect(await foods.search(sessionB, 'receita teste de tenant a')).toEqual([]);
+      const composition = await owner.recipeIngredient.findMany({ where: { recipeFoodId: r.food.id } });
+      expect(composition).toHaveLength(1);
+      expect(composition[0]).toMatchObject({
+        accountId: TENANT_A, ingredientName: ingredientFood.name,
+      });
+      await expect(forTenant(TENANT_B, undefined, db).recipeIngredient.findMany({ where: { recipeFoodId: r.food.id } })).resolves.toEqual([]);
+      await expect(owner.recipeIngredient.deleteMany({ where: { recipeFoodId: r.food.id } })).rejects.toThrow(/imutável/i);
+      await owner.food.delete({ where: { id: r.food.id } });
+      expect(await owner.recipeIngredient.count({ where: { recipeFoodId: r.food.id } })).toBe(0);
+    });
+
+    it('rejeita ingredientes privados de outro tenant e secretaria', async () => {
+      const privateFood = await owner.food.create({
+        data: { accountId: TENANT_A, name: 'Segredo da receita A', normalizedName: 'segredo da receita a' },
+      });
+      expect(await foods.createRecipe(sessionB, {
+        name: 'Receita invasora', yieldGrams: 100, ingredients: [{ foodId: privateFood.id, grams: 100 }],
+      })).toMatchObject({ ok: false, reason: 'ingredient_unavailable' });
+      expect(await foods.createRecipe({ ...sessionA, role: 'SECRETARIA' }, {
+        name: 'Sem acesso', yieldGrams: 100, ingredients: [{ foodId: privateFood.id, grams: 100 }],
+      })).toMatchObject({ ok: false, reason: 'forbidden' });
+    });
+  });
+
   it('medidas de alimento próprio são privadas; as de alimentos oficiais não aceitam escrita', async () => {
     const own = await owner.food.findFirstOrThrow({ where: { name: 'Caldo da casa' } });
     expect(await foods.addMeasure(sessionA, own.id, 'concha', 120)).toEqual({ ok: true });

@@ -1,9 +1,22 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { calculateNutrientTotals, type NutrientSnapshot, type NutrientTotals } from '@/src/meal-plans/nutrition';
+import { calculateNutrientTotals, compareSubstitution, type NutrientSnapshot, type NutrientTotals } from '@/src/meal-plans/nutrition';
 
 type Measure = { id: string | null; label: string; grams: number };
+type EditorAlternative = {
+  id?: string;
+  foodId: string;
+  foodName: string;
+  quantity: number;
+  grams: number;
+  measureLabel: string;
+  nutrients: NutrientSnapshot;
+  sourceCode: string | null;
+  sourceName: string | null;
+  sourceVersion: string | null;
+  comparison?: ReturnType<typeof compareSubstitution>;
+};
 type EditorItem = {
   foodId: string;
   foodName: string;
@@ -16,6 +29,7 @@ type EditorItem = {
   sourceName: string | null;
   sourceVersion: string | null;
   measures: Measure[];
+  alternatives: EditorAlternative[];
 };
 type Meal = { name: string; time: string; items: EditorItem[] };
 type VersionMeal = {
@@ -150,6 +164,7 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
           measureId: item.measureId, measureLabel: item.measureLabel, measureGrams: item.measureGrams,
           nutrients: item.nutrients, sourceCode: item.sourceCode, sourceName: item.sourceName,
           sourceVersion: item.sourceVersion, measures: options,
+          alternatives: item.alternatives ?? [],
         };
       })),
     })));
@@ -180,22 +195,51 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
 
   async function addFood(hit: FoodHit) {
     const mealIndex = addingMeal;
-    if (mealIndex === null) return;
+    const alternativeTarget = addingAlternative;
+    if (mealIndex === null && !alternativeTarget) return;
     try {
       const [foodData, measureData] = await Promise.all([
-        request<{ results: FoodHit[] }>(
-          `/api/foods/search?q=${encodeURIComponent(hit.name)}`,
-        ),
-        request<{ measures: Measure[] }>(`/api/foods/${encodeURIComponent(hit.id)}/measures/options`),
+        request<{ results: FoodHit[] }>(`/api/foods/search?q=${encodeURIComponent(hit.name)}`),
+        mealIndex === null
+          ? Promise.resolve({ measures: [] as Measure[] })
+          : request<{ measures: Measure[] }>(`/api/foods/${encodeURIComponent(hit.id)}/measures/options`),
       ]);
       const selectedFood = foodData.results.find((food) => food.id === hit.id);
       if (!selectedFood) throw new Error('Alimento não encontrado na busca');
-      setMeals((previous) => previous.map((meal, i) => i !== mealIndex ? meal : {
-        ...meal,
-        items: [...meal.items, {
-          foodId: hit.id, foodName: hit.name, quantity: 100, measureId: null,
-          measureLabel: 'g', measureGrams: 1,
-          nutrients: {
+      if (alternativeTarget) {
+        const { mealIndex: targetMeal, itemIndex: targetItem } = alternativeTarget;
+        setMeals((previous) => previous.map((meal, i) => i !== targetMeal ? meal : {
+          ...meal,
+          items: meal.items.map((item, j) => j !== targetItem ? item : {
+            ...item,
+            alternatives: [...item.alternatives, {
+              foodId: selectedFood.id,
+              foodName: selectedFood.name,
+              quantity: quantityGrams(item),
+              grams: quantityGrams(item),
+              measureLabel: 'g',
+              nutrients: {
+                energyKcal: selectedFood.energyKcal,
+                proteinG: selectedFood.proteinG,
+                carbG: selectedFood.carbG,
+                fatG: selectedFood.fatG,
+                fiberG: selectedFood.fiberG,
+                ...(selectedFood.micros ?? {}),
+              },
+              sourceCode: selectedFood.source?.code ?? null,
+              sourceName: selectedFood.source?.name ?? (selectedFood.id ? 'Alimento próprio' : null),
+              sourceVersion: selectedFood.source?.version ?? null,
+            }],
+          }),
+        }));
+        setAddingAlternative(null);
+      } else {
+        setMeals((previous) => previous.map((meal, i) => i !== mealIndex ? meal : {
+          ...meal,
+          items: [...meal.items, {
+            foodId: hit.id, foodName: hit.name, quantity: 100, measureId: null,
+            measureLabel: 'g', measureGrams: 1,
+            nutrients: {
             energyKcal: selectedFood.energyKcal,
             proteinG: selectedFood.proteinG,
             carbG: selectedFood.carbG,
@@ -204,13 +248,28 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
             ...(selectedFood.micros ?? {}),
           },
           sourceCode: hit.source?.code ?? null, sourceName: hit.source?.name ?? null,
-          sourceVersion: hit.source?.version ?? null, measures: measureData.measures,
-        }],
-      }));
+            sourceVersion: hit.source?.version ?? null, measures: measureData.measures, alternatives: [],
+          }],
+        }));
+        setAddingMeal(null);
+      }
       setSearch('');
       setResults([]);
-      setAddingMeal(null);
     } catch (e) { setError((e as Error).message); }
+  }
+
+  const [addingAlternative, setAddingAlternative] = useState<{ mealIndex: number; itemIndex: number } | null>(null);
+
+  function updateAlternative(mealIndex: number, itemIndex: number, alternativeIndex: number, quantity: number) {
+    setMeals((previous) => previous.map((meal, i) => i !== mealIndex ? meal : {
+      ...meal,
+      items: meal.items.map((item, j) => j !== itemIndex ? item : {
+        ...item,
+        alternatives: item.alternatives.map((alternative, k) =>
+          k === alternativeIndex ? { ...alternative, quantity, grams: quantity } : alternative,
+        ),
+      }),
+    }));
   }
 
   async function save() {
@@ -223,6 +282,9 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
           name: meal.name, time: meal.time,
           items: meal.items.map((item) => ({
             foodId: item.foodId, quantity: item.quantity, measureId: item.measureId,
+            alternatives: item.alternatives.map((alternative) => ({
+              foodId: alternative.foodId, quantity: alternative.quantity,
+            })),
           })),
         })),
       };
@@ -269,11 +331,27 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
           {visibleVersion?.meals.map((meal) => (
             <div className="card" key={meal.id}>
               <h3>{meal.time} · {meal.name}</h3>
-              <ul>{meal.items.map((item) => <li key={item.id}>{item.foodName}: {item.quantity} {item.measureLabel} ({item.grams} g)</li>)}</ul>
+              <ul>{meal.items.map((item) => <li key={item.id}>
+                {item.foodName}: {item.quantity} {item.measureLabel} ({item.grams} g)
+                {item.alternatives.length > 0 && <ul><li>Substituições:
+                  <ul>{item.alternatives.map((alternative) => {
+                    const comparison = compareSubstitution(item, alternative);
+                    return <li key={alternative.id ?? alternative.foodId}>
+                      {alternative.foodName}: {alternative.grams} g
+                      {comparison.exceedsTolerance
+                        ? ' · diferença nutricional acima de 10%'
+                        : ' · dentro de 10% nos nutrientes comparáveis'}
+                    </li>
+                  })}</ul>
+                </li></ul>}
+              </li>)}</ul>
               {showTotals(meal.totals)}
             </div>
           ))}
           {visibleVersion && <><h3>Total do dia</h3>{showTotals(visibleVersion.totals)}</>}
+          {visibleVersion && <a className="btn secondary" href={`/pacientes/${encodeURIComponent(patientId)}/plano/${encodeURIComponent(selected.id)}/imprimir?version=${visibleVersion.version}`}>
+            Imprimir ou salvar em PDF
+          </a>}
           {historyVersion === selected.versions[0]?.version && (
             <button className="btn secondary" type="button" onClick={editLatestVersion}>Editar como nova versão</button>
           )}
@@ -304,7 +382,31 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
                       if (measure) updateItem(mealIndex, itemIndex, { measureId: measure.id, measureLabel: measure.label, measureGrams: measure.grams });
                     }}>{item.measures.map((measure, i) => <option key={measure.id ?? `g-${i}`} value={measure.id ?? ''}>{measure.label}{measure.label !== 'g' ? ` (${measure.grams} g)` : ''}</option>)}</select></label>
                     <span>{quantityGrams(item)} g</span>
+                    {item.alternatives.map((alternative, alternativeIndex) => {
+                      const comparison = compareSubstitution(
+                        { grams: quantityGrams(item), nutrients: item.nutrients },
+                        { grams: alternative.quantity, nutrients: alternative.nutrients },
+                      );
+                      return <div className="meal-alternative" key={`${alternative.foodId}-${alternativeIndex}`}>
+                        <strong>Substituição: {alternative.foodName}</strong>
+                        <label>Quantidade (g) <input type="number" min="0.001" step="0.001"
+                          value={alternative.quantity}
+                          onChange={(e) => updateAlternative(mealIndex, itemIndex, alternativeIndex, Number(e.target.value))} /></label>
+                        <span className={comparison.exceedsTolerance ? 'error' : 'muted'}>
+                          {comparison.exceedsTolerance ? 'Diferença acima de 10% nos nutrientes comparáveis' : 'Dentro de 10% nos nutrientes comparáveis'}
+                        </span>
+                        <button className="btn secondary" type="button" onClick={() => updateItem(mealIndex, itemIndex, {
+                          alternatives: item.alternatives.filter((_, i) => i !== alternativeIndex),
+                        })}>Remover substituição</button>
+                      </div>;
+                    })}
                     <button className="btn secondary" type="button" onClick={() => updateMeal(mealIndex, { items: meal.items.filter((_, i) => i !== itemIndex) })}>Remover</button>
+                    <button className="btn secondary" type="button" disabled={item.alternatives.length >= 8} onClick={() => {
+                      setAddingAlternative({ mealIndex, itemIndex });
+                      setAddingMeal(null);
+                      setSearch('');
+                      setResults([]);
+                    }}>Adicionar substituição</button>
                   </div>
                 ))}
                 <button className="btn secondary" type="button" onClick={() => { setAddingMeal(mealIndex); setSearch(''); setResults([]); }}>Adicionar alimento</button>
@@ -317,6 +419,17 @@ export default function MealPlanWorkspace({ patientId }: { patientId: string }) 
                       </button></li>
                     ))}</ul>}
                     <button type="button" className="btn secondary" onClick={() => setAddingMeal(null)}>Cancelar</button>
+                  </div>
+                )}
+                {addingAlternative?.mealIndex === mealIndex && (
+                  <div className="food-search">
+                    <label>Buscar substituição <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+                    {results.length > 0 && <ul>{results.map((hit) => (
+                      <li key={hit.id}><button className="link-button" type="button" onClick={() => addFood(hit)}>
+                        {hit.name}{hit.source ? ` · ${hit.source.name} ${hit.source.version}` : ' · próprio'}
+                      </button></li>
+                    ))}</ul>}
+                    <button type="button" className="btn secondary" onClick={() => setAddingAlternative(null)}>Cancelar</button>
                   </div>
                 )}
                 <h4>Totais da refeição</h4>{showTotals(mealTotals)}

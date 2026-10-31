@@ -4,7 +4,7 @@ import type { SessionInfo } from '../auth/service';
 import { forTenant, withTenant } from '../db/tenant';
 import type { PatientDataSource } from '../lgpd/service';
 import type { MealPlanBody, MealPlanVersionBody } from './validation';
-import { calculateNutrientTotals, type NutrientSnapshot } from './nutrition';
+import { calculateNutrientTotals, compareSubstitution, type NutrientSnapshot } from './nutrition';
 import { decryptClinicalData, encryptClinicalData, newTenantDataKey, unwrapTenantDataKey, wrapTenantDataKey } from '../clinical/encryption';
 
 const CLINICAL = new Set(['TITULAR', 'PROFISSIONAL']);
@@ -32,6 +32,17 @@ type PlanVersionPayload = {
       sourceName: string | null;
       sourceVersion: string | null;
       nutrients: NutrientSnapshot;
+      alternatives: {
+        foodId: string;
+        quantity: number;
+        grams: number;
+        measureLabel: string;
+        foodName: string;
+        sourceCode: string | null;
+        sourceName: string | null;
+        sourceVersion: string | null;
+        nutrients: NutrientSnapshot;
+      }[];
     }[];
   }[];
 };
@@ -126,6 +137,7 @@ function payloadFromLegacy(version: {
         grams: Number(item.grams),
         measureGrams: Number(item.measureGrams),
         nutrients: item.nutrients as NutrientSnapshot,
+        alternatives: [],
       })),
     })),
   };
@@ -152,10 +164,18 @@ async function readVersionPayload(tx: Tx, version: LegacyVersionRow): Promise<Pl
 async function dtoVersion(tx: Tx, version: LegacyVersionRow) {
   const payload = await readVersionPayload(tx, version);
   const meals = payload.meals.map((meal, mealIndex) => {
-    const items = meal.items.map((item, itemIndex) => ({
-      ...item,
-      id: `${version.id}:meal:${mealIndex}:item:${itemIndex}`,
-    }));
+    const items = meal.items.map((item, itemIndex) => {
+      const alternatives = item.alternatives ?? [];
+      return {
+        ...item,
+        id: `${version.id}:meal:${mealIndex}:item:${itemIndex}`,
+        alternatives: alternatives.map((alternative, alternativeIndex) => ({
+          ...alternative,
+          id: `${version.id}:meal:${mealIndex}:item:${itemIndex}:alternative:${alternativeIndex}`,
+          comparison: compareSubstitution(item, alternative),
+        })),
+      };
+    });
     return {
       id: `${version.id}:meal:${mealIndex}`,
       name: meal.name,
@@ -222,7 +242,9 @@ export function createMealPlanService({ db, now = () => new Date() }: { db: Pris
     version: number,
     input: Input,
   ) {
-    const foodIds = [...new Set(input.meals.flatMap((meal) => meal.items.map((item) => item.foodId)))];
+    const foodIds = [...new Set(input.meals.flatMap((meal) => meal.items.flatMap((item) => [
+      item.foodId, ...(item.alternatives ?? []).map((alternative) => alternative.foodId),
+    ])))];
     const foods = await tx.food.findMany({
       where: { id: { in: foodIds }, OR: [{ accountId: null }, { accountId: s.accountId }] },
       include: { table: { select: { code: true, name: true, version: true } } },
@@ -243,6 +265,12 @@ export function createMealPlanService({ db, now = () => new Date() }: { db: Pris
         if (!Number.isFinite(grams) || grams <= 0 || grams > 1000000) {
           throw new InvalidMealPlanInput(['quantity_out_of_range']);
         }
+        for (const alternative of item.alternatives ?? []) {
+          const alternativeGrams = Number(alternative.quantity.toFixed(3));
+          if (!Number.isFinite(alternativeGrams) || alternativeGrams <= 0 || alternativeGrams > 1000000) {
+            throw new InvalidMealPlanInput(['quantity_out_of_range']);
+          }
+        }
       }
     }
 
@@ -257,6 +285,21 @@ export function createMealPlanService({ db, now = () => new Date() }: { db: Pris
           const food = foodById.get(item.foodId)!;
           const measure = item.measureId ? measureById.get(item.measureId) : undefined;
           const measureGrams = measure ? Number(measure.grams) : 1;
+          const nutrients = snapshotNutrients(food);
+          const alternatives = (item.alternatives ?? []).map((alternative) => {
+            const alternativeFood = foodById.get(alternative.foodId)!;
+            return {
+              foodId: alternativeFood.id,
+              quantity: alternative.quantity,
+              grams: Number(alternative.quantity.toFixed(3)),
+              measureLabel: 'g',
+              foodName: alternativeFood.name,
+              sourceCode: alternativeFood.table?.code ?? null,
+              sourceName: alternativeFood.table?.name ?? (alternativeFood.accountId ? 'Alimento próprio' : null),
+              sourceVersion: alternativeFood.table?.version ?? null,
+              nutrients: snapshotNutrients(alternativeFood),
+            };
+          });
           return {
             foodId: food.id,
             quantity: item.quantity,
@@ -268,7 +311,8 @@ export function createMealPlanService({ db, now = () => new Date() }: { db: Pris
             sourceCode: food.table?.code ?? null,
             sourceName: food.table?.name ?? (food.accountId ? 'Alimento próprio' : null),
             sourceVersion: food.table?.version ?? null,
-            nutrients: snapshotNutrients(food),
+            nutrients,
+            alternatives,
           };
         }),
       })),

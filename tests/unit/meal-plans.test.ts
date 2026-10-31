@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateNutrientTotals } from '../../src/meal-plans/nutrition';
+import { calculateNutrientTotals, compareSubstitution } from '../../src/meal-plans/nutrition';
 import { mealPlanBodySchema, mealPlanVersionBodySchema } from '../../src/meal-plans/validation';
 
 describe('US-PLA-02 · cálculo de nutrientes [unit]', () => {
@@ -35,6 +35,28 @@ describe('US-PLA-01 · validação do plano [unit]', () => {
     expect(mealPlanBodySchema.parse(body)).toEqual(body);
     expect(mealPlanVersionBodySchema.parse({ ...body, baseVersion: 3 }).baseVersion).toBe(3);
     expect(mealPlanVersionBodySchema.safeParse({ ...body, baseVersion: 0 }).success).toBe(false);
+  });
+
+  describe('US-PLA-05 · comparação de substituições [unit]', () => {
+    it('calcula diferenças de energia e macros e sinaliza quando supera a tolerância', () => {
+      expect(compareSubstitution(
+        { grams: 100, nutrients: { energyKcal: 100, proteinG: 10, carbG: 20, fatG: 2 } },
+        { grams: 100, nutrients: { energyKcal: 120, proteinG: 9, carbG: 22, fatG: 2 } },
+      )).toMatchObject({
+        exceedsTolerance: true,
+        nutrients: {
+          energyKcal: { primary: 100, alternative: 120, delta: 20, deltaPercent: 20 },
+          proteinG: { deltaPercent: -10 },
+        },
+      });
+    });
+
+    it('sinaliza valores não comparáveis sem ocultar nutrientes ausentes', () => {
+      expect(compareSubstitution(
+        { grams: 100, nutrients: { energyKcal: null } },
+        { grams: 100, nutrients: { energyKcal: 100 } },
+      )).toMatchObject({ exceedsTolerance: false, nutrients: { energyKcal: { primary: null, alternative: 100, delta: null } } });
+    });
   });
 
   it('rejeita horário inválido, quantidade não positiva e payload com campos desconhecidos', () => {

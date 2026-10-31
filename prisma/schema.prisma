@@ -62,6 +62,7 @@ model Account {
   auditLogs     AuditLog[]
   terms         TermsAcceptance[]
   foods         Food[]
+  recipeIngredients RecipeIngredient[]
   invitations   Invitation[]
   invoices      Invoice[]
   events        TenantEvent[]
@@ -321,7 +322,9 @@ model Food {
   table    FoodTable?        @relation(fields: [tableId], references: [id])
   measures HouseholdMeasure[]
   mealPlanItems MealPlanItem[]
+  recipeBases RecipeIngredient[] @relation("RecipeBase")
 
+  @@unique([id, accountId])
   @@unique([tableId, externalCode])
   @@index([normalizedName])
   @@index([accountId])
@@ -337,6 +340,23 @@ model HouseholdMeasure {
   mealPlanItems MealPlanItem[]
 
   @@index([foodId])
+}
+
+model RecipeIngredient {
+  id              String   @id @default(cuid())
+  accountId       String
+  recipeFoodId    String
+  ingredientFoodId String
+  grams           Decimal  @db.Decimal(10, 3)
+  ingredientName  String
+  nutrients       Json
+  createdAt       DateTime @default(now())
+
+  account       Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  recipeFood    Food    @relation("RecipeBase", fields: [recipeFoodId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  @@index([accountId, recipeFoodId])
+  @@index([ingredientFoodId])
 }
 
 // ───────────── Planos alimentares ─────────────

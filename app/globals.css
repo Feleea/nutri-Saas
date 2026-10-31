@@ -31,3 +31,16 @@ th { background:#eef3ef; } .filters { display:grid; grid-template-columns:repeat
 .nutrition-totals div { border-bottom:1px solid var(--line); padding:4px 0; }
 .nutrition-totals dt { color:var(--muted); font-size:.85rem; }
 .nutrition-totals dd { margin:2px 0; font-weight:600; }
+.meal-alternative { flex: 1 1 100%; display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; padding:8px 0 8px 16px; border-left:3px solid var(--line); }
+.meal-alternative > * { flex:1 1 150px; }
+.print-controls { display:flex; gap:8px; margin-bottom:16px; }
+.print-header { border-bottom:2px solid var(--line); margin-bottom:20px; }
+.print-meal { break-inside:avoid; page-break-inside:avoid; border-bottom:1px solid var(--line); padding:12px 0; }
+.print-footer { margin-top:32px; color:var(--muted); font-size:.8rem; }
+@media print {
+  body { background:#fff; color:#111; }
+  main.printable-meal-plan { max-width:none; padding:0; }
+  .print-hidden { display:none !important; }
+  .print-meal { break-inside:avoid; page-break-inside:avoid; }
+  .card, table { box-shadow:none; }
+}

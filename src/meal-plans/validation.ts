@@ -4,6 +4,10 @@ const itemSchema = z.object({
   foodId: z.string().min(1).max(64),
   quantity: z.number().finite().positive().max(100000),
   measureId: z.string().min(1).max(64).nullable().optional(),
+  alternatives: z.array(z.object({
+    foodId: z.string().min(1).max(64),
+    quantity: z.number().finite().positive().max(100000),
+  }).strict()).max(8).optional(),
 }).strict();
 
 const mealSchema = z.object({

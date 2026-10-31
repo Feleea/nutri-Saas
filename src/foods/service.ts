@@ -5,6 +5,7 @@ import { normalizeName } from './normalize';
 import { expandTerm } from './synonyms';
 import { validateFoodValues, toPer100g, type FoodValues } from './validate';
 import { offeredMeasures, type Measure } from './measures';
+import { calculateRecipeNutrition, type RecipeIngredientInput } from './recipes';
 
 const n = (d: unknown) => (d === null || d === undefined ? null : Number(d));
 
@@ -85,6 +86,78 @@ export function createFoodService({ db }: { db: PrismaClient }) {
     return { ok: true as const, food, warnings: v.warnings };
   }
 
+  async function createRecipe(
+    s: SessionInfo,
+    input: { name: string; yieldGrams: number; ingredients: { foodId: string; grams: number }[]; confirm?: boolean },
+  ) {
+    if (!['TITULAR', 'PROFISSIONAL'].includes(s.role)) return { ok: false as const, reason: 'forbidden' as const };
+    const foodIds = [...new Set(input.ingredients.map((ingredient) => ingredient.foodId))];
+    const t = tenant(s);
+    const foods = await t.food.findMany({
+      where: { id: { in: foodIds } },
+      include: { table: { select: { code: true, name: true, version: true } } },
+    });
+    const foodsById = new Map(foods.map((food) => [food.id, food]));
+    if (foodsById.size !== foodIds.length) return { ok: false as const, reason: 'ingredient_unavailable' as const };
+    const ingredients: RecipeIngredientInput[] = input.ingredients.map((ingredient) => {
+      const food = foodsById.get(ingredient.foodId)!;
+      return {
+        foodId: food.id,
+        grams: ingredient.grams,
+        name: food.name,
+        nutrients: {
+          energyKcal: n(food.energyKcal),
+          proteinG: n(food.proteinG),
+          carbG: n(food.carbG),
+          fatG: n(food.fatG),
+          fiberG: n(food.fiberG),
+          ...(food.micros && typeof food.micros === 'object' && !Array.isArray(food.micros) ? food.micros : {}),
+        },
+      };
+    });
+    let nutrition;
+    try {
+      nutrition = calculateRecipeNutrition(ingredients, input.yieldGrams);
+    } catch (error) {
+      if (error instanceof Error && ['recipe_input_invalid', 'ingredient_quantity_invalid'].includes(error.message)) {
+        return { ok: false as const, reason: 'validation' as const, errors: [error.message] };
+      }
+      throw error;
+    }
+    const validation = validateFoodValues(nutrition.values);
+    const create = async () => t.$transaction(async (tx) => {
+      const food = await tx.food.create({
+        data: {
+          accountId: s.accountId,
+          name: input.name.trim(),
+          normalizedName: normalizeName(input.name),
+          energyKcal: nutrition.values.energyKcal,
+          proteinG: nutrition.values.proteinG,
+          carbG: nutrition.values.carbG,
+          fatG: nutrition.values.fatG,
+          fiberG: nutrition.values.fiberG,
+          micros: nutrition.micros,
+        },
+      });
+      await tx.recipeIngredient.createMany({
+        data: ingredients.map((ingredient) => ({
+          accountId: s.accountId,
+          recipeFoodId: food.id,
+          ingredientFoodId: ingredient.foodId,
+          grams: ingredient.grams,
+          ingredientName: ingredient.name,
+          nutrients: ingredient.nutrients,
+        })),
+      });
+      return food;
+    });
+    if (validation.warnings.length && !input.confirm) {
+      return { ok: false as const, reason: 'confirm_warnings' as const, warnings: validation.warnings };
+    }
+    const food = await create();
+    return { ok: true as const, food, ingredients, yieldGrams: input.yieldGrams, warnings: validation.warnings };
+  }
+
   /** Só alimentos do próprio tenant aceitam novas medidas; os das tabelas oficiais são somente leitura. */
   async function addMeasure(s: SessionInfo, foodId: string, label: string, grams: number) {
     if (!label.trim() || !(grams > 0)) return { ok: false as const, reason: 'invalid' as const };
@@ -107,5 +180,5 @@ export function createFoodService({ db }: { db: PrismaClient }) {
     return [{ id: null, label: 'g', grams: 1 }, ...rows.map((row) => ({ ...row, grams: Number(row.grams) }))];
   }
 
-  return { search, setDefaultTable, createCustomFood, addMeasure, getMeasures, getMeasureOptions };
+  return { search, setDefaultTable, createCustomFood, createRecipe, addMeasure, getMeasures, getMeasureOptions };
 }

@@ -17,17 +17,18 @@ let patientA: string;
 let patientB: string;
 let patientWithoutConsent: string;
 let foodId: string;
+let alternativeFoodId: string;
 let measureId: string;
 let createdPlanId: string;
 let mealIdB: string;
 
-const input = (baseVersion?: number) => ({
+const input = (baseVersion?: number, alternatives: { foodId: string; quantity: number }[] = []) => ({
   title: 'Plano para teste',
   ...(baseVersion === undefined ? {} : { baseVersion }),
   meals: [{
     name: 'Café da manhã',
     time: '08:00',
-    items: [{ foodId, quantity: 2, measureId }],
+    items: [{ foodId, quantity: 2, measureId, alternatives }],
   }],
 });
 
@@ -58,6 +59,13 @@ beforeAll(async () => {
     },
   });
   foodId = food.id;
+  const alternativeFood = await owner.food.create({
+    data: {
+      tableId: table.id, externalCode: 'PLAN-2', name: 'Banana sintética', normalizedName: 'banana sintetica',
+      energyKcal: 90, proteinG: 1, carbG: 23, fatG: 0.3, fiberG: 2.6,
+    },
+  });
+  alternativeFoodId = alternativeFood.id;
   const measure = await owner.householdMeasure.create({ data: { foodId, label: 'colher de sopa', grams: 15 } });
   measureId = measure.id;
 }, 30_000);
@@ -71,7 +79,7 @@ describe('US-PLA-01/02/03/07 · persistência e isolamento de planos [seg][api]'
   });
 
   it('converte medida caseira, congela fonte/nutrientes, soma sem zerar ausentes e cria versões imutáveis', async () => {
-    const created = await plans.create(sessionA, patientA, input());
+    const created = await plans.create(sessionA, patientA, input(undefined, [{ foodId: alternativeFoodId, quantity: 30 }]));
     if (!created.ok) throw new Error(JSON.stringify(created));
     createdPlanId = created.plan.id;
     const storedPlan = await owner.mealPlan.findUniqueOrThrow({ where: { id: createdPlanId } });
@@ -82,6 +90,7 @@ describe('US-PLA-01/02/03/07 · persistência e isolamento de planos [seg][api]'
     expect(storedVersion.encryptedPayload).not.toContain('Plano para teste');
     expect(storedVersion.encryptedPayload).not.toContain('Café da manhã');
     expect(storedVersion.encryptedPayload).not.toContain('Aveia sintética');
+    expect(storedVersion.encryptedPayload).not.toContain('Banana sintética');
     expect(await owner.mealPlanMeal.count({ where: { accountId: TENANT_A } })).toBe(0);
     expect(await owner.mealPlanItem.count({ where: { accountId: TENANT_A } })).toBe(0);
     await expect(forTenant(TENANT_A, sessionA.userId, app).mealPlan.create({
@@ -103,6 +112,10 @@ describe('US-PLA-01/02/03/07 · persistência e isolamento de planos [seg][api]'
     expect(created.version.meals[0].items[0]).toMatchObject({
       quantity: 2, grams: 30, measureLabel: 'colher de sopa',
       sourceCode: 'PLAN_TEST', sourceVersion: 'v1',
+    });
+    expect(created.version.meals[0].items[0].alternatives[0]).toMatchObject({
+      foodId: alternativeFoodId, foodName: 'Banana sintética', grams: 30,
+      comparison: { exceedsTolerance: true },
     });
     expect(created.version.meals[0].totals).toMatchObject({
       energyKcal: { value: 114, complete: true, missing: 0 },

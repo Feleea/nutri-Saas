@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_OWNER")
+}
+
+// ───────────── Enums ─────────────
+enum Role {
+  TITULAR
+  PROFISSIONAL
+  SECRETARIA
+}
+
+enum AccountStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELED
+}
+
+enum PatientStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum Module {
+  CLINICO
+  PRODUCAO
+}
+
+// ───────────── Tenant: Conta → Unidade → Usuário ─────────────
+model Account {
+  id           String        @id @default(cuid())
+  name         String
+  email        String
+  phone        String?
+  crn          String?
+  city         String?
+  status       AccountStatus @default(TRIAL)
+  trialEndsAt  DateTime?
+  createdAt    DateTime      @default(now())
+  lastAccessAt DateTime?
+
+  units         Unit[]
+  memberships   Membership[]
+  patients      Patient[]
+  subscription  Subscription?
+  usageCounters UsageCounter[]
+  auditLogs     AuditLog[]
+  terms         TermsAcceptance[]
+  foods         Food[]
+}
+
+model Unit {
+  id        String   @id @default(cuid())
+  accountId String
+  name      String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patients    Patient[]
+  memberships Membership[]
+
+  @@index([accountId])
+}
+
+// Identidade global; o vínculo com a conta e o papel ficam em Membership.
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  name            String
+  emailVerifiedAt DateTime?
+  totpSecret      String? // cifrado na aplicação
+  failedLogins    Int       @default(0)
+  lockedUntil     DateTime?
+  createdAt       DateTime  @default(now())
+
+  memberships Membership[]
+  terms       TermsAcceptance[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  accountId String
+  userId    String
+  unitId    String?
+  role      Role
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unit    Unit?   @relation(fields: [unitId], references: [id])
+
+  @@unique([accountId, userId])
+  @@index([userId])
+}
+
+// ───────────── Planos e cobrança (configuração, não código) ─────────────
+model Plan {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  priceCents        Int
+  modules           Module[]
+  patientLimit      Int? // null = sob consulta / ilimitado
+  userLimit         Int?
+  storageMb         Int?
+  activePatientDays Int      @default(90) // regra de "paciente ativo" configurável
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id               String        @id @default(cuid())
+  accountId        String        @unique
+  planId           String
+  status           AccountStatus @default(TRIAL)
+  currentPeriodEnd DateTime?
+  gatewayRef       String?
+  createdAt        DateTime      @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  plan    Plan    @relation(fields: [planId], references: [id])
+}
+
+// Preenchida SOMENTE pela função refresh_usage_counters() (só conta registros).
+model UsageCounter {
+  id             String   @id @default(cuid())
+  accountId      String
+  date           DateTime @db.Date
+  patientsTotal  Int
+  patientsActive Int
+  users          Int
+  storageBytes   BigInt   @default(0)
+  computedAt     DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, date])
+}
+
+// ───────────── Dados clínicos (invisíveis ao painel do dono) ─────────────
+model Patient {
+  id             String        @id @default(cuid())
+  accountId      String
+  unitId         String?
+  fullName       String
+  email          String?
+  phone          String?
+  cpf            String?
+  status         PatientStatus @default(ACTIVE)
+  lastActivityAt DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  archivedAt     DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  unit    Unit?   @relation(fields: [unitId], references: [id])
+
+  @@index([accountId, status])
+  @@index([accountId, cpf])
+}
+
+// ───────────── Conformidade ─────────────
+model TermsAcceptance {
+  id         String   @id @default(cuid())
+  accountId  String
+  userId     String
+  kind       String // TERMS | PRIVACY | DPA
+  version    String
+  acceptedAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+// Imutável: UPDATE/DELETE bloqueados por trigger (ver prisma/sql/rls.sql).
+model AuditLog {
+  id          String   @id @default(cuid())
+  accountId   String
+  actorUserId String?
+  action      String
+  resource    String
+  resourceId  String?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+// ───────────── Painel do dono (super-admin) ─────────────
+model PlatformAdmin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  totpSecret   String // 2FA obrigatório
+  createdAt    DateTime @default(now())
+
+  actions AdminAuditLog[]
+}
+
+model AdminAuditLog {
+  id              String   @id @default(cuid())
+  adminId         String
+  action          String
+  targetAccountId String?
+  details         Json?
+  createdAt       DateTime @default(now())
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id])
+}
+
+// ───────────── Base de alimentos ─────────────
+model FoodTable {
+  id        String   @id @default(cuid())
+  code      String   @unique // TACO, TBCA
+  name      String
+  version   String
+  sourceUrl String?
+  license   String? // confirmar condições de uso antes de publicar
+  createdAt DateTime @default(now())
+
+  foods Food[]
+}
+
+// accountId nulo = alimento global (TACO/TBCA); preenchido = alimento do tenant.
+// Nutriente nulo = "não informado" (nunca somar zero silenciosamente).
+model Food {
+  id             String   @id @default(cuid())
+  accountId      String?
+  tableId        String?
+  externalCode   String?
+  name           String
+  normalizedName String // sem acentos e minúsculo, para busca
+  energyKcal     Decimal? @db.Decimal(10, 3)
+  proteinG       Decimal? @db.Decimal(10, 3)
+  carbG          Decimal? @db.Decimal(10, 3)
+  fatG           Decimal? @db.Decimal(10, 3)
+  fiberG         Decimal? @db.Decimal(10, 3)
+  micros         Json? // demais nutrientes por 100 g
+  createdAt      DateTime @default(now())
+
+  account  Account?          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  table    FoodTable?        @relation(fields: [tableId], references: [id])
+  measures HouseholdMeasure[]
+
+  @@unique([tableId, externalCode])
+  @@index([normalizedName])
+  @@index([accountId])
+}
+
+model HouseholdMeasure {
+  id     String  @id @default(cuid())
+  foodId String
+  label  String // ex.: "colher de sopa"
+  grams  Decimal @db.Decimal(10, 3)
+
+  food Food @relation(fields: [foodId], references: [id], onDelete: Cascade)
+
+  @@index([foodId])
+}

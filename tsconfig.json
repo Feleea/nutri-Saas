@@ -12,7 +12,11 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": { "@/*": ["./*"] },
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
   },
-  "include": ["next-env.d.ts", "app", "src", "tests", "scripts", "prisma/*.ts", "vitest.config.ts", ".next/types/**/*.ts"]
+  "include": ["next-env.d.ts", "app", "src", "tests", "scripts", "prisma/*.ts", "vitest.config.ts", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
 }

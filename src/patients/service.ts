@@ -35,7 +35,7 @@ interface Deps {
 }
 
 /** Remove campos internos e mascara o CPF nas listagens. */
-function dto(p: any, opts: { fullCpf?: boolean } = {}) {
+function dto(p: Prisma.PatientGetPayload<{}>, opts: { fullCpf?: boolean } = {}) {
   return {
     id: p.id, fullName: p.fullName, email: p.email, phone: p.phone, goal: p.goal, tags: p.tags, status: p.status,
     remindersOptOut: p.remindersOptOut, cpf: opts.fullCpf ? p.cpf : maskCpf(p.cpf), createdAt: p.createdAt, archivedAt: p.archivedAt,
@@ -86,7 +86,7 @@ export function createPatientService({ db, mailer, now = () => new Date() }: Dep
 
     const cpf = input.cpf?.trim() ? normalizeCpf(input.cpf) : null;
     let mails: Mail[] = [];
-    const result = await withTenant(s.accountId, async (tx): Promise<{ ok: true; patient: any } | Failure> => {
+    const result = await withTenant(s.accountId, async (tx): Promise<{ ok: true; patient: Prisma.PatientGetPayload<{}> } | Failure> => {
       await lock(tx, s.accountId); // serializa cadastros do mesmo tenant: o limite não estoura em requisições simultâneas
       const ent = await entitlement(tx, s.accountId);
       if (ent.mode !== 'FULL') return { ok: false, reason: 'access_restricted', upgrade: true };

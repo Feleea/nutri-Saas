@@ -292,10 +292,33 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
     return codes;
   }
 
+  async function disableTotp(userId: string, password: string, code: string): Promise<boolean> {
+    const user = await db.user.findUnique({ where: { id: userId } });
+    if (!user?.totpSecret || !user.totpEnabledAt || !(await verifyPassword(password, user.passwordHash))) return false;
+
+    const step = verifyTotp(decryptSecret(user.totpSecret), code.trim(), now().getTime(), user.totpLastStep);
+    if (step === null) return false;
+
+    return db.$transaction(async (tx) => {
+      const disabled = await tx.user.updateMany({
+        where: {
+          id: userId,
+          totpSecret: user.totpSecret,
+          totpEnabledAt: { not: null },
+          OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }],
+        },
+        data: { totpSecret: null, totpEnabledAt: null, totpLastStep: null },
+      });
+      if (disabled.count !== 1) return false;
+      await tx.recoveryCode.deleteMany({ where: { userId } });
+      return true;
+    });
+  }
+
   return {
     signup, confirmEmail, resendVerification,
     login, verifyMfa, validateSession, logout,
     requestPasswordReset, resetPassword,
-    beginTotpSetup, confirmTotpSetup,
+    beginTotpSetup, confirmTotpSetup, disableTotp,
   };
 }

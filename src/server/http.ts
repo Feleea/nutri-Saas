@@ -59,7 +59,10 @@ interface Opts<B, P> extends RouteMeta {
 export function defineRoute<B = undefined, P = Record<string, string>>(opts: Opts<B, P>) {
   const meta: RouteMeta = { auth: opts.auth, action: opts.action, rateLimit: opts.rateLimit };
 
-  const fn = async (req: Request, routeCtx?: { params: Promise<P> }): Promise<Response> => {
+  const fn = async (
+    req: Request,
+    routeCtx: { params: Promise<Record<string, string | string[] | undefined>> },
+  ): Promise<Response> => {
     try {
       const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
       if (mutating && opts.auth !== 'webhook' && opts.auth !== 'job' && !csrfOk(req)) return fail(403, 'csrf');
@@ -108,7 +111,7 @@ export function defineRoute<B = undefined, P = Record<string, string>>(opts: Opt
         body = parsed.data;
       }
 
-      const params = (routeCtx ? await routeCtx.params : {}) as P;
+      const params = (await routeCtx.params) as P;
       const out = await opts.handler({ req, body, params, ip, session, sessionToken, adminId, adminToken });
       return out instanceof Response ? out : reply(out);
     } catch (err) {

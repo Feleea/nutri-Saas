@@ -45,7 +45,7 @@ O ID da história aparece no nome do teste (ex.: `US-SEC-01`) para rastreabilida
 ## Recuperação de senha e 2FA (US-AUT-03 e US-AUT-04)
 - `src/auth/totp.ts`: TOTP (RFC 6238) sem dependências, validado com os vetores oficiais; anti-reuso do código; códigos de recuperação.
 - `src/crypto/secrets.ts`: AES-256-GCM para o segredo TOTP. Defina `APP_ENCRYPTION_KEY` (`openssl rand -base64 32`).
-- `src/auth/service.ts`: `requestPasswordReset`/`resetPassword` (link de 1 h, uso único, encerra sessões, avisa titulares), `login` → `verifyMfa` (senha sozinha não cria sessão), `beginTotpSetup`/`confirmTotpSetup`.
+- `src/auth/service.ts`: `requestPasswordReset`/`resetPassword` (link de 1 h, uso único, encerra sessões, avisa titulares), `login` → `verifyMfa` (senha sozinha não cria sessão), `beginTotpSetup`/`confirmTotpSetup` e `disableTotp` (exige senha e código atual).
 - `src/auth/admin.ts`: login do super-admin com senha + TOTP sempre obrigatórios, sessão de 15 min e bloqueio por tentativas.
 - Aplicar: `npx prisma migrate dev --name mfa && npm run db:rls && npm test`.
 

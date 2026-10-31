@@ -211,6 +211,24 @@ describe('US-AUT-04 · 2FA por aplicativo autenticador [e2e][seg]', () => {
     const { userId } = await userWith2fa('mfa8@example.test');
     await expect(auth.beginTotpSetup(userId)).rejects.toThrow();
   });
+
+  it('desativar exige senha e código atual e remove códigos de recuperação', async () => {
+    const { userId, secret } = await userWith2fa('mfa9@example.test');
+
+    expect(await auth.disableTotp(userId, 'senha-incorreta', totpCode(secret, clock))).toBe(false);
+    expect(await auth.disableTotp(userId, PASSWORD, wrongCode(secret))).toBe(false);
+    expect((await owner.user.findUniqueOrThrow({ where: { id: userId } })).totpEnabledAt).not.toBeNull();
+
+    const code = totpCode(secret, clock);
+    expect(await auth.disableTotp(userId, PASSWORD, code)).toBe(true);
+    expect(await auth.disableTotp(userId, PASSWORD, code)).toBe(false);
+    const user = await owner.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(user.totpSecret).toBeNull();
+    expect(user.totpEnabledAt).toBeNull();
+    expect(user.totpLastStep).toBeNull();
+    expect(await owner.recoveryCode.count({ where: { userId } })).toBe(0);
+    expect((await auth.login('mfa9@example.test', PASSWORD)).ok).toBe(true);
+  });
 });
 
 describe('US-AUT-04 · super-admin: 2FA obrigatório [seg]', () => {

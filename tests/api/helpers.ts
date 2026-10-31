@@ -1,7 +1,10 @@
 import { randomInt } from 'node:crypto';
 import type { MemoryMailer } from '../../src/auth/mailer';
 
-type Handler = (req: Request, ctx?: { params: Promise<any> }) => Promise<Response>;
+type Handler = (
+  req: Request,
+  ctx: { params: Promise<Record<string, string | string[] | undefined>> },
+) => Promise<Response>;
 
 export interface Call {
   method?: string;

@@ -25,7 +25,84 @@ describe('antropometria clínica', () => {
 
   it('não classifica IMC sem idade e curva pediátrica disponíveis', () => {
     const input = anthropometryBodySchema.parse({ weight: 45, height: 150 });
+    expect(normalizeAnthropometry(input)).toMatchObject({ bodyComposition: null });
     expect(normalizeAnthropometry(input)).not.toHaveProperty('classification');
+  });
+
+  it('uses the entered bioimpedance reading and derives masses without estimating a percentage', () => {
+    const input = anthropometryBodySchema.parse({
+      weight: 80, height: 180,
+      bodyComposition: { method: 'BIOIMPEDANCE', bodyFatPercent: 25, deviceModel: 'Device X' },
+    });
+    expect(normalizeAnthropometry(input)).toMatchObject({
+      ok: true,
+      bodyComposition: {
+        method: 'BIOIMPEDANCE',
+        formula: expect.stringContaining('sem equação estimada'),
+        rawInputs: { bodyFatPercent: 25, deviceModel: 'Device X' },
+        derivedValues: { bodyFatPercent: 25, fatMassKg: 20, fatFreeMassKg: 60 },
+      },
+    });
+  });
+
+  it('calculates adult Jackson–Pollock male three-site percentage and records its raw inputs/formula', () => {
+    const input = anthropometryBodySchema.parse({
+      weight: 80, height: 180,
+      bodyComposition: {
+        method: 'JACKSON_POLLOCK_3_SITE', sexAtBirth: 'male', ageYears: 30,
+        chestMm: 10, abdomenMm: 20, thighMm: 15,
+      },
+    });
+    const result = normalizeAnthropometry(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bodyComposition?.method).toBe('JACKSON_POLLOCK_3_SITE');
+      expect(result.bodyComposition?.formula).toContain('495/DC − 450');
+      expect(result.bodyComposition?.rawInputs).toMatchObject({
+        sexAtBirth: 'male', ageYears: 30, chestMm: 10, abdomenMm: 20, thighMm: 15,
+      });
+      expect(result.bodyComposition?.derivedValues.bodyFatPercent).toBe(13.6);
+      expect(result.bodyComposition?.derivedValues.fatMassKg).toBe(10.88);
+      expect(result.bodyComposition?.derivedValues.fatFreeMassKg).toBe(69.12);
+    }
+  });
+
+  it('uses the female three-site equation and Siri conversion', () => {
+    const input = anthropometryBodySchema.parse({
+      weight: 80, height: 180,
+      bodyComposition: {
+        method: 'JACKSON_POLLOCK_3_SITE', sexAtBirth: 'female', ageYears: 30,
+        tricepsMm: 15, suprailiacMm: 20, thighMm: 25,
+      },
+    });
+    const result = normalizeAnthropometry(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bodyComposition?.formula).toContain('1.0994921');
+      expect(result.bodyComposition?.derivedValues.bodyFatPercent).toBe(24.1);
+      expect(result.bodyComposition?.derivedValues.fatMassKg).toBe(19.28);
+    }
+  });
+
+  it('does not accept missing/irrelevant skinfolds, pediatric ages, or unsupported percentages', () => {
+    expect(anthropometryBodySchema.safeParse({
+      weight: 70, height: 175,
+      bodyComposition: { method: 'JACKSON_POLLOCK_3_SITE', sexAtBirth: 'female', ageYears: 17, thighMm: 20 },
+    }).success).toBe(false);
+    expect(anthropometryBodySchema.safeParse({
+      weight: 70, height: 175,
+      bodyComposition: { method: 'JACKSON_POLLOCK_3_SITE', sexAtBirth: 'female', ageYears: 30, thighMm: 20 },
+    }).success).toBe(false);
+    expect(anthropometryBodySchema.safeParse({
+      weight: 70, height: 175,
+      bodyComposition: {
+        method: 'JACKSON_POLLOCK_3_SITE', sexAtBirth: 'male', ageYears: 30,
+        chestMm: 10, abdomenMm: 20, thighMm: 15, tricepsMm: 12,
+      },
+    }).success).toBe(false);
+    expect(anthropometryBodySchema.safeParse({
+      weight: 70, height: 175, bodyComposition: { method: 'BIOIMPEDANCE', bodyFatPercent: 80 },
+    }).success).toBe(false);
   });
 });
 

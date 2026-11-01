@@ -7,8 +7,8 @@ import {
   decryptClinicalData, encryptClinicalData, newTenantDataKey, unwrapTenantDataKey, wrapTenantDataKey,
 } from './encryption';
 import {
-  type AnamnesisBody, type AnamnesisPatch, type AnthropometryBody, type TemplateBody, type TemplatePatch,
-  type TemplateField,
+  type AnamnesisBody, type AnamnesisPatch, type AnthropometryBody, type BodyCompositionInput,
+  type TemplateBody, type TemplatePatch, type TemplateField,
 } from './validation';
 
 type Tx = Prisma.TransactionClient;
@@ -141,6 +141,18 @@ type AnthropometryPayload = {
   neckCm: number | null;
   armCm: number | null;
   thighCm: number | null;
+  bodyComposition?: BodyCompositionPayload | null;
+};
+
+type BodyCompositionPayload = {
+  method: 'BIOIMPEDANCE' | 'JACKSON_POLLOCK_3_SITE';
+  formula: string;
+  rawInputs: Record<string, string | number>;
+  derivedValues: {
+    bodyFatPercent: number;
+    fatMassKg: number;
+    fatFreeMassKg: number;
+  };
 };
 
 async function anthropometryDto(tx: KeyStore, record: Prisma.AnthropometryRecordGetPayload<{}>) {
@@ -186,6 +198,64 @@ async function anthropometryDto(tx: KeyStore, record: Prisma.AnthropometryRecord
     neckCm: data.neckCm === null ? null : String(data.neckCm),
     armCm: data.armCm === null ? null : String(data.armCm),
     thighCm: data.thighCm === null ? null : String(data.thighCm),
+    bodyComposition: data.bodyComposition ?? null,
+  };
+}
+
+function roundTo(value: number, decimals: number) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function calculateBodyComposition(input: BodyCompositionInput, weightKg: number) {
+  let bodyFatPercent: number;
+  let formula: string;
+  let rawInputs: Record<string, string | number>;
+  if (input.method === 'BIOIMPEDANCE') {
+    bodyFatPercent = input.bodyFatPercent;
+    formula = 'Bioimpedância: leitura de percentual de gordura informada pelo equipamento (sem equação estimada)';
+    rawInputs = {
+      bodyFatPercent: input.bodyFatPercent,
+      ...(input.deviceModel ? { deviceModel: input.deviceModel } : {}),
+    };
+  } else {
+    const sum = input.sexAtBirth === 'male'
+      ? input.chestMm! + input.abdomenMm! + input.thighMm!
+      : input.tricepsMm! + input.suprailiacMm! + input.thighMm!;
+    const density = input.sexAtBirth === 'male'
+      ? 1.10938 - 0.0008267 * sum + 0.0000016 * (sum ** 2) - 0.0002574 * input.ageYears
+      : 1.0994921 - 0.0009929 * sum + 0.0000023 * (sum ** 2) - 0.0001392 * input.ageYears;
+    bodyFatPercent = 495 / density - 450;
+    formula = input.sexAtBirth === 'male'
+      ? 'Jackson–Pollock 3 sítios masculino: DC = 1.10938 − 0.0008267Σ + 0.0000016Σ² − 0.0002574×idade; Siri: %GC = 495/DC − 450'
+      : 'Jackson–Pollock 3 sítios feminino: DC = 1.0994921 − 0.0009929Σ + 0.0000023Σ² − 0.0001392×idade; Siri: %GC = 495/DC − 450';
+    rawInputs = input.sexAtBirth === 'male'
+      ? {
+        sexAtBirth: input.sexAtBirth, ageYears: input.ageYears, chestMm: input.chestMm!,
+        abdomenMm: input.abdomenMm!, thighMm: input.thighMm!,
+      }
+      : {
+        sexAtBirth: input.sexAtBirth, ageYears: input.ageYears, tricepsMm: input.tricepsMm!,
+        suprailiacMm: input.suprailiacMm!, thighMm: input.thighMm!,
+      };
+  }
+  if (!Number.isFinite(bodyFatPercent) || bodyFatPercent < 0 || bodyFatPercent > 75) {
+    return { ok: false as const, errors: ['body_fat_out_of_range'] };
+  }
+  const roundedBodyFatPercent = roundTo(bodyFatPercent, 1);
+  const fatMassKg = weightKg * roundedBodyFatPercent / 100;
+  return {
+    ok: true as const,
+    data: {
+      method: input.method,
+      formula,
+      rawInputs,
+      derivedValues: {
+        bodyFatPercent: roundedBodyFatPercent,
+        fatMassKg: roundTo(fatMassKg, 2),
+        fatFreeMassKg: roundTo(weightKg - fatMassKg, 2),
+      },
+    } satisfies BodyCompositionPayload,
   };
 }
 
@@ -196,6 +266,10 @@ export function normalizeAnthropometry(input: AnthropometryBody) {
   if (!Number.isFinite(weightKg) || weightKg < 1 || weightKg > 500) return { ok: false as const, errors: ['weight_out_of_range'] };
   if (!Number.isFinite(heightCm) || heightCm < 30 || heightCm > 250) return { ok: false as const, errors: ['height_out_of_range'] };
   if (measures.some((v) => v !== undefined && v !== null && (v < 10 || v > 300))) return { ok: false as const, errors: ['measure_out_of_range'] };
+  const bodyComposition = input.bodyComposition
+    ? calculateBodyComposition(input.bodyComposition, weightKg)
+    : null;
+  if (bodyComposition && !bodyComposition.ok) return bodyComposition;
   const weight = Math.round(weightKg * 100) / 100;
   const height = Math.round(heightCm * 100) / 100;
   const bmi = Math.round((weightKg / ((heightCm / 100) ** 2)) * 10) / 10;
@@ -210,6 +284,7 @@ export function normalizeAnthropometry(input: AnthropometryBody) {
     neckCm: input.neckCm ?? null,
     armCm: input.armCm ?? null,
     thighCm: input.thighCm ?? null,
+    bodyComposition: bodyComposition?.data ?? null,
   };
 }
 
@@ -455,6 +530,7 @@ export function createClinicalService({ db, now = () => new Date() }: { db: Pris
         neckCm: normalized.neckCm,
         armCm: normalized.armCm,
         thighCm: normalized.thighCm,
+        bodyComposition: normalized.bodyComposition,
       };
       const clinicalDataCiphertext = await encryptForTenant(
         tx, s.accountId, id, 'ANTHROPOMETRY', clinicalData,

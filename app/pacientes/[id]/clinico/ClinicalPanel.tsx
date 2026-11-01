@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../_lib/api';
+import AnthropometryHistory, { type Measurement } from './AnthropometryHistory';
 
 type Field = {
   id: string; label: string; required: boolean;
@@ -14,11 +15,6 @@ type RecordRow = {
   answers: Record<string, unknown>; createdAt: string; completedAt?: string | null;
   versionSnapshot: { name: string; fields: Field[] };
 };
-type Measurement = {
-  id: string; measuredAt: string; weightKg: number | string; heightCm: number | string;
-  bmi: number | string; waistCm?: number | string | null;
-};
-
 export default function ClinicalPanel({ patientId }: { patientId: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [records, setRecords] = useState<RecordRow[]>([]);
@@ -29,6 +25,8 @@ export default function ClinicalPanel({ patientId }: { patientId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [compositionMethod, setCompositionMethod] = useState('');
+  const [skinfoldSex, setSkinfoldSex] = useState('male');
 
   const base = `/api/patients/${patientId}`;
   const editing = records.find((r) => r.id === editingId);
@@ -99,6 +97,29 @@ export default function ClinicalPanel({ patientId }: { patientId: string }) {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const value = (name: string) => {
+      const entry = form.get(name);
+      return entry === null || entry === '' ? undefined : Number(entry);
+    };
+    const method = String(form.get('bodyCompositionMethod') ?? '');
+    const bodyComposition = method === 'BIOIMPEDANCE'
+      ? {
+        method,
+        bodyFatPercent: value('bodyFatPercent'),
+        ...(form.get('deviceModel') ? { deviceModel: String(form.get('deviceModel')) } : {}),
+      }
+      : method === 'JACKSON_POLLOCK_3_SITE'
+        ? {
+          method,
+          sexAtBirth: String(form.get('sexAtBirth')),
+          ageYears: value('ageYears'),
+          ...(value('chestMm') !== undefined ? { chestMm: value('chestMm') } : {}),
+          ...(value('abdomenMm') !== undefined ? { abdomenMm: value('abdomenMm') } : {}),
+          ...(value('thighMm') !== undefined ? { thighMm: value('thighMm') } : {}),
+          ...(value('tricepsMm') !== undefined ? { tricepsMm: value('tricepsMm') } : {}),
+          ...(value('suprailiacMm') !== undefined ? { suprailiacMm: value('suprailiacMm') } : {}),
+        }
+        : undefined;
     const body = {
       weight: Number(form.get('weight')), weightUnit: form.get('weightUnit'),
       height: Number(form.get('height')), heightUnit: form.get('heightUnit'),
@@ -108,10 +129,15 @@ export default function ClinicalPanel({ patientId }: { patientId: string }) {
       neckCm: form.get('neckCm') ? Number(form.get('neckCm')) : undefined,
       armCm: form.get('armCm') ? Number(form.get('armCm')) : undefined,
       thighCm: form.get('thighCm') ? Number(form.get('thighCm')) : undefined,
+      bodyComposition,
     };
     const r = await api(`${base}/anthropometry`, body);
-    if (r.status >= 300) return setMessage(r.data?.error?.code === 'validation' ? 'Peso, altura ou medidas fora da faixa permitida.' : 'Não foi possível registrar as medidas.');
+    if (r.status >= 300) return setMessage(r.data?.error?.code === 'validation'
+      ? 'Confira o peso, altura, percentual de gordura e as medidas informadas.'
+      : 'Não foi possível registrar as medidas.');
     formElement.reset();
+    setCompositionMethod('');
+    setSkinfoldSex('male');
     setMessage('Antropometria registrada.');
     await reload();
   }
@@ -178,16 +204,43 @@ export default function ClinicalPanel({ patientId }: { patientId: string }) {
           <label>Pescoço<input type="number" name="neckCm" min="10" max="300" step="any" /></label>
           <label> braço<input type="number" name="armCm" min="10" max="300" step="any" /></label>
           <label>Coxa<input type="number" name="thighCm" min="10" max="300" step="any" /></label>
+          <fieldset>
+            <legend>Composição corporal (opcional)</legend>
+            <label>Método
+              <select name="bodyCompositionMethod" value={compositionMethod} onChange={(event) => setCompositionMethod(event.target.value)}>
+                <option value="">Não informar</option>
+                <option value="BIOIMPEDANCE">Leitura de bioimpedância</option>
+                <option value="JACKSON_POLLOCK_3_SITE">Dobras cutâneas · Jackson–Pollock 3 sítios + Siri</option>
+              </select>
+            </label>
+            {compositionMethod === 'BIOIMPEDANCE' && <>
+              <label>Gordura corporal lida no equipamento (%)<input required type="number" name="bodyFatPercent" min="0" max="75" step="0.1" /></label>
+              <label>Modelo do equipamento (opcional)<input type="text" name="deviceModel" maxLength={100} /></label>
+              <p className="muted">Informe a leitura do equipamento; o sistema não estima esse percentual por bioimpedância.</p>
+            </>}
+            {compositionMethod === 'JACKSON_POLLOCK_3_SITE' && <>
+              <label>Sexo usado pela equação
+                <select required name="sexAtBirth" value={skinfoldSex} onChange={(event) => setSkinfoldSex(event.target.value)}>
+                  <option value="male">Masculino</option><option value="female">Feminino</option>
+                </select>
+              </label>
+              <label>Idade (anos)<input required type="number" name="ageYears" min="18" max="100" step="1" /></label>
+              <p>Dobras em milímetros. Informe os três sítios correspondentes ao sexo selecionado; a equação não se aplica abaixo de 18 anos.</p>
+              {skinfoldSex === 'male' ? <>
+                <label>Peitoral (mm)<input required type="number" name="chestMm" min="2" max="80" step="0.1" /></label>
+                <label>Abdominal (mm)<input required type="number" name="abdomenMm" min="2" max="80" step="0.1" /></label>
+              </> : <>
+                <label>Tríceps (mm)<input required type="number" name="tricepsMm" min="2" max="80" step="0.1" /></label>
+                <label>Supra-ilíaca (mm)<input required type="number" name="suprailiacMm" min="2" max="80" step="0.1" /></label>
+              </>}
+              <label>Coxa (mm)<input required type="number" name="thighMm" min="2" max="80" step="0.1" /></label>
+              <p className="muted">A fórmula usa peitoral, abdominal e coxa para homens; tríceps, supra-ilíaca e coxa para mulheres.</p>
+            </>}
+          </fieldset>
           <button type="submit">Registrar medidas</button>
         </form>
-        <p className="muted">O IMC é calculado automaticamente. A classificação não é apresentada: a ficha não contém idade e crianças/adolescentes exigem curvas pediátricas adequadas.</p>
-        {measurements.length ? <table>
-          <thead><tr><th>Data</th><th>Peso (kg)</th><th>Altura (cm)</th><th>IMC</th><th>Cintura (cm)</th></tr></thead>
-          <tbody>{measurements.map((m) => <tr key={m.id}>
-            <td>{new Date(m.measuredAt).toLocaleDateString('pt-BR')}</td><td>{Number(m.weightKg).toFixed(2)}</td>
-            <td>{Number(m.heightCm).toFixed(2)}</td><td>{Number(m.bmi).toFixed(1)}</td><td>{m.waistCm == null ? '—' : Number(m.waistCm).toFixed(1)}</td>
-          </tr>)}</tbody>
-        </table> : <p>Nenhuma medida registrada.</p>}
+        <p className="muted">O IMC é calculado automaticamente. A classificação não é apresentada: a ficha não contém idade e crianças/adolescentes exigem curvas pediátricas adequadas. Dobras cutâneas fornecem uma estimativa adulta e dependem da técnica de medição; não substituem avaliação clínica.</p>
+        <AnthropometryHistory measurements={measurements} />
       </section>
     </>
   );

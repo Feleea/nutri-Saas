@@ -50,6 +50,41 @@ export const anamnesisPatchSchema = z.object({
 }).strict().refine((input) => input.answers !== undefined || input.status !== undefined, 'empty_update');
 
 const optionalMeasure = z.number().finite().nullable().optional();
+const bioimpedanceSchema = z.object({
+  method: z.literal('BIOIMPEDANCE'),
+  bodyFatPercent: z.number().finite().min(0).max(75),
+  deviceModel: z.string().trim().min(1).max(100).optional(),
+}).strict();
+const skinfoldSchema = z.object({
+  method: z.literal('JACKSON_POLLOCK_3_SITE'),
+  sexAtBirth: z.enum(['male', 'female']),
+  ageYears: z.number().int().min(18).max(100),
+  chestMm: z.number().finite().min(2).max(80).optional(),
+  abdomenMm: z.number().finite().min(2).max(80).optional(),
+  thighMm: z.number().finite().min(2).max(80).optional(),
+  tricepsMm: z.number().finite().min(2).max(80).optional(),
+  suprailiacMm: z.number().finite().min(2).max(80).optional(),
+}).strict().superRefine((input, ctx) => {
+  const required = input.sexAtBirth === 'male'
+    ? ['chestMm', 'abdomenMm', 'thighMm'] as const
+    : ['tricepsMm', 'suprailiacMm', 'thighMm'] as const;
+  for (const field of required) {
+    if (input[field] === undefined) {
+      ctx.addIssue({ code: 'custom', message: 'skinfold_required', path: [field] });
+    }
+  }
+  const unused = input.sexAtBirth === 'male' ? ['tricepsMm', 'suprailiacMm'] as const : ['chestMm', 'abdomenMm'] as const;
+  for (const field of unused) {
+    if (input[field] !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'skinfold_not_used_by_formula', path: [field] });
+    }
+  }
+});
+export const bodyCompositionSchema = z.union([
+  bioimpedanceSchema,
+  skinfoldSchema,
+]);
+
 export const anthropometryBodySchema = z.object({
   measuredAt: z.string().datetime({ offset: true }).optional(),
   weight: z.number().finite(),
@@ -61,6 +96,7 @@ export const anthropometryBodySchema = z.object({
   neckCm: optionalMeasure,
   armCm: optionalMeasure,
   thighCm: optionalMeasure,
+  bodyComposition: bodyCompositionSchema.optional(),
 }).strict();
 
 export type TemplateField = z.infer<typeof templateFieldSchema>;
@@ -69,3 +105,4 @@ export type TemplatePatch = z.infer<typeof templatePatchSchema>;
 export type AnamnesisBody = z.infer<typeof anamnesisBodySchema>;
 export type AnamnesisPatch = z.infer<typeof anamnesisPatchSchema>;
 export type AnthropometryBody = z.infer<typeof anthropometryBodySchema>;
+export type BodyCompositionInput = z.infer<typeof bodyCompositionSchema>;

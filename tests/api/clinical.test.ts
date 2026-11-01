@@ -136,9 +136,16 @@ describe('API clínica · anamnese, consentimento e antropometria [api][seg]', (
     const patientId = await patient(t.cookie, 'Paciente antropometria');
     const saved = await call(createAnthropometry, { cookie: t.cookie, params: { id: patientId }, body: {
       weight: 154.323583, weightUnit: 'lb', height: 1.75, heightUnit: 'm', waistCm: 82,
+      bodyComposition: { method: 'BIOIMPEDANCE', bodyFatPercent: 25, deviceModel: 'Device Test' },
     } });
     expect(saved.status).toBe(201);
-    expect(saved.json.record).toMatchObject({ weightKg: '70', heightCm: '175', bmi: '22.9', waistCm: '82' });
+    expect(saved.json.record).toMatchObject({
+      weightKg: '70', heightCm: '175', bmi: '22.9', waistCm: '82',
+      bodyComposition: {
+        method: 'BIOIMPEDANCE', rawInputs: { bodyFatPercent: 25, deviceModel: 'Device Test' },
+        derivedValues: { bodyFatPercent: 25, fatMassKg: 17.5, fatFreeMassKg: 52.5 },
+      },
+    });
     expect(saved.json.bmiClassification).toBe('NOT_CLASSIFIED');
     const invalid = await call(createAnthropometry, { cookie: t.cookie, params: { id: patientId }, body: {
       weight: 0.5, height: 175,
@@ -154,6 +161,8 @@ describe('API clínica · anamnese, consentimento e antropometria [api][seg]', (
     expect(JSON.stringify(stored)).not.toContain('"weightKg":70');
     expect(JSON.stringify(stored)).not.toContain('"heightCm":175');
     expect(JSON.stringify(stored)).not.toContain('"waistCm":82');
+    expect(stored.clinicalDataCiphertext).not.toContain('Device Test');
+    expect(stored.clinicalDataCiphertext).not.toContain('"bodyFatPercent":25');
   });
 
   it('usa uma chave de dados embrulhada e distinta para cada tenant', async () => {

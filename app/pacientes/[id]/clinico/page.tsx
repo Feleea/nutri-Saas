@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { ctx } from '@/src/server/context';
 import { SESSION_COOKIE } from '@/src/server/web';
 import ClinicalPanel from './ClinicalPanel';
+import AttachmentsPanel from './AttachmentsPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export default async function PacienteClinico({ params }: { params: Promise<{ id
       <h1>Prontuário · {result.patient.fullName}</h1>
       {result.alerts.includes('consent_missing')
         ? <div className="card"><p className="error" role="alert">Registre ou renove o consentimento antes de consultar ou incluir informações clínicas.</p></div>
-        : <ClinicalPanel patientId={id} />}
+        : <><ClinicalPanel patientId={id} /><AttachmentsPanel patientId={id} /></>}
     </main>
   );
 }

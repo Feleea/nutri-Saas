@@ -21,8 +21,21 @@ export default function AdminLoginForm() {
       <input id="email" name="email" type="email" required />
       <label htmlFor="password">Senha</label>
       <input id="password" name="password" type="password" required />
-      <label htmlFor="code">Código do autenticador (obrigatório)</label>
-      <input id="code" name="code" inputMode="numeric" autoComplete="one-time-code" required />
+      <label htmlFor="code">Código temporário do autenticador</label>
+      <input
+        id="code"
+        name="code"
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        pattern="[0-9]{6}"
+        maxLength={6}
+        title="Digite os 6 dígitos exibidos pelo aplicativo autenticador."
+        aria-describedby="code-help"
+      />
+      <small id="code-help">
+        Digite os 6 dígitos atuais. Em desenvolvimento, deixe vazio somente se o bypass local estiver habilitado.
+      </small>
       <button>Entrar</button>
       {error && <p className="error" role="alert">{error}</p>}
     </form>

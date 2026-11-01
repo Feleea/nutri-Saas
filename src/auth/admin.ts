@@ -7,19 +7,31 @@ import { auditOrigin } from './audit';
 export const ADMIN_AUTH_CONFIG = { maxFailedLogins: 5, lockMinutes: 15, sessionIdleMinutes: 15 };
 const MIN = 60_000;
 
+export function isAdminTotpBypassEnabled(
+  env: { NODE_ENV?: string; ALLOW_ADMIN_LOGIN_WITHOUT_TOTP?: string } = process.env,
+): boolean {
+  return env.NODE_ENV === 'development' && env.ALLOW_ADMIN_LOGIN_WITHOUT_TOTP === 'true';
+}
+
 export type AdminLoginResult = { ok: true; token: string } | { ok: false; reason: 'invalid_credentials' };
 
 interface Deps {
   db: PrismaClient; // conectado como suasnutri_admin
   now?: () => Date;
   config?: typeof ADMIN_AUTH_CONFIG;
+  environment?: { NODE_ENV?: string; ALLOW_ADMIN_LOGIN_WITHOUT_TOTP?: string };
 }
 
 /**
  * Login do super-admin. Senha E código TOTP são sempre exigidos; não existe caminho
  * sem 2FA nem função para desativá-lo (US-AUT-04). Sessões curtas (15 min de inatividade).
  */
-export function createAdminAuthService({ db, now = () => new Date(), config = ADMIN_AUTH_CONFIG }: Deps) {
+export function createAdminAuthService({
+  db,
+  now = () => new Date(),
+  config = ADMIN_AUTH_CONFIG,
+  environment = process.env,
+}: Deps) {
   const FAIL = { ok: false, reason: 'invalid_credentials' } as const;
   let dummyHash: Promise<string> | undefined;
 
@@ -41,9 +53,12 @@ export function createAdminAuthService({ db, now = () => new Date(), config = AD
     }
 
     const passwordOk = await verifyPassword(password, admin.passwordHash);
-    const step = verifyTotp(decryptSecret(admin.totpSecret), totpCode.trim(), now().getTime(), admin.totpLastStep);
+    const bypassTotp = totpCode.trim() === '' && isAdminTotpBypassEnabled(environment);
+    const step = bypassTotp
+      ? null
+      : verifyTotp(decryptSecret(admin.totpSecret), totpCode.trim(), now().getTime(), admin.totpLastStep);
 
-    if (!passwordOk || step === null) {
+    if (!passwordOk || (!bypassTotp && step === null)) {
       await recordLoginFailure(sourceIp);
       const updated = await db.platformAdmin.update({ where: { id: admin.id }, data: { failedLogins: { increment: 1 } } });
       if (updated.failedLogins >= config.maxFailedLogins) {
@@ -55,19 +70,27 @@ export function createAdminAuthService({ db, now = () => new Date(), config = AD
       return FAIL;
     }
 
-    const upd = await db.platformAdmin.updateMany({
-      where: { id: admin.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
-      data: { totpLastStep: step, failedLogins: 0 },
-    });
-    if (upd.count !== 1) {
-      await recordLoginFailure(sourceIp);
-      return FAIL; // código reutilizado em paralelo
+    if (step !== null) {
+      const upd = await db.platformAdmin.updateMany({
+        where: { id: admin.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
+        data: { totpLastStep: step, failedLogins: 0 },
+      });
+      if (upd.count !== 1) {
+        await recordLoginFailure(sourceIp);
+        return FAIL; // código reutilizado em paralelo
+      }
+    } else {
+      await db.platformAdmin.update({ where: { id: admin.id }, data: { failedLogins: 0 } });
     }
 
     const { token, hash } = newToken();
     await db.adminSession.create({ data: { tokenHash: hash, adminId: admin.id, createdAt: now(), lastSeenAt: now() } });
     await db.adminAuditLog.create({
-      data: { adminId: admin.id, action: 'ADMIN_LOGIN', details: { sourceIp: auditOrigin(sourceIp) } },
+      data: {
+        adminId: admin.id,
+        action: bypassTotp ? 'ADMIN_LOGIN_TOTP_BYPASSED' : 'ADMIN_LOGIN',
+        details: { sourceIp: auditOrigin(sourceIp) },
+      },
     });
     return { ok: true, token };
   }

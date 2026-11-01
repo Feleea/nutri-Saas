@@ -65,10 +65,13 @@ O ID da história aparece no nome do teste (ex.: `US-SEC-01`) para rastreabilida
 
 ## Camada web (Next.js)
 ```bash
-cp .env.example .env     # preencha APP_ENCRYPTION_KEY e GATEWAY_WEBHOOK_SECRET
+cp .env.example .env     # preencha APP_ENCRYPTION_KEY; GATEWAY_WEBHOOK_SECRET habilita cobrança
 npm install && npx prisma generate
 npm run dev              # http://localhost:3000
 ```
+- `GATEWAY_WEBHOOK_SECRET` é necessário para checkout e webhooks de cobrança; sua ausência não deve impedir login ou cadastro.
+- Enquanto não houver provedor de e-mail, `ALLOW_UNVERIFIED_EMAIL_LOGIN=true` permite login sem confirmação somente fora de produção. Em produção o bypass é sempre ignorado.
+- Para desenvolvimento local, `ALLOW_ADMIN_LOGIN_WITHOUT_TOTP=true` permite omitir o código TOTP do admin, mantendo a senha obrigatória. Só é aceito com `NODE_ENV=development`; em produção é sempre ignorado e o uso é auditado.
 - `app/api/**`: rotas HTTP finas sobre os serviços. Cada rota usa `defineRoute` (`src/server/http.ts`) e declara `auth` (`public`, `session`, `admin` ou `webhook`) e, nas de sessão, uma ação da matriz `src/server/permissions.ts`.
 - Sessão por cookie HttpOnly + SameSite=Lax (`sn_session` para clientes, `sn_admin` para o dono, separados). O token não vai no corpo das respostas.
 - Telas: `/login`, `/cadastro`, `/convite`, `/painel`, `/admin/login`, `/admin`, `/admin/tenants/[id]`.

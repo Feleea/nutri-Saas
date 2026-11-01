@@ -19,6 +19,12 @@ export const AUTH_CONFIG = {
   mfaChallengeMinutes: 5,
 };
 
+export function isUnverifiedEmailLoginEnabled(
+  env: { NODE_ENV?: string; ALLOW_UNVERIFIED_EMAIL_LOGIN?: string } = process.env,
+): boolean {
+  return env.NODE_ENV === 'development' && env.ALLOW_UNVERIFIED_EMAIL_LOGIN === 'true';
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN = 60_000;
 
@@ -49,9 +55,16 @@ interface Deps {
   mailer: Mailer;
   now?: () => Date; // relógio injetável: testa prazos sem esperar
   config?: typeof AUTH_CONFIG;
+  environment?: { NODE_ENV?: string; ALLOW_UNVERIFIED_EMAIL_LOGIN?: string };
 }
 
-export function createAuthService({ db, mailer, now = () => new Date(), config = AUTH_CONFIG }: Deps) {
+export function createAuthService({
+  db,
+  mailer,
+  now = () => new Date(),
+  config = AUTH_CONFIG,
+  environment = process.env,
+}: Deps) {
   let dummyHash: Promise<string> | undefined;
   const INVALID = { ok: false, reason: 'invalid_credentials' } as const;
   const after = (minutes: number) => new Date(now().getTime() + minutes * MIN);
@@ -183,7 +196,7 @@ export function createAuthService({ db, mailer, now = () => new Date(), config =
     if (user.failedLogins || user.lockedUntil) {
       await db.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null } });
     }
-    if (!user.emailVerifiedAt) {
+    if (!user.emailVerifiedAt && !isUnverifiedEmailLoginEnabled(environment)) {
       await recordLoginFailure(sourceIp);
       return { ok: false, reason: 'email_not_verified' };
     }

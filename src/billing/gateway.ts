@@ -20,10 +20,16 @@ export const signBody = (secret: string, body: string) => createHmac('sha256', s
 
 /** Adaptador genérico por HMAC-SHA256; também serve como sandbox nos testes. */
 export class HmacGateway implements Gateway {
-  constructor(private secret: string) {}
+  constructor(private readonly secret: string | (() => string)) {}
+
+  private signingSecret(): string {
+    const secret = typeof this.secret === 'function' ? this.secret() : this.secret;
+    if (!secret) throw new Error('GATEWAY_WEBHOOK_SECRET ausente');
+    return secret;
+  }
 
   verify(rawBody: string, signature: string): boolean {
-    const a = Buffer.from(signBody(this.secret, rawBody));
+    const a = Buffer.from(signBody(this.signingSecret(), rawBody));
     const b = Buffer.from(signature ?? '');
     return a.length === b.length && timingSafeEqual(a, b);
   }
@@ -37,6 +43,7 @@ export class HmacGateway implements Gateway {
   }
 
   createCharge() {
+    this.signingSecret();
     return { gatewayRef: `chg_${randomBytes(8).toString('hex')}` };
   }
 }

@@ -21,8 +21,6 @@ import { RateLimiter } from './ratelimit';
 import { createMailer } from './mailer';
 
 function build() {
-  const secret = process.env.GATEWAY_WEBHOOK_SECRET;
-  if (!secret) throw new Error('GATEWAY_WEBHOOK_SECRET ausente');
   const mailer = createMailer();
   const adminAuth = createAdminAuthService({ db: adminPrisma });
   const patients = createPatientService({ db: prisma, mailer });
@@ -50,7 +48,11 @@ function build() {
       hooks: [{ name: 'avisos-de-limite', purge: (_patientId, accountId) => patients.reconcileLimitNotices(accountId) }],
     }),
     // serviços de plataforma: usam o papel admin do banco e só são chamados depois da autorização na rota
-    billing: createBillingService({ db: adminPrisma, mailer, gateway: new HmacGateway(secret) }),
+    billing: createBillingService({
+      db: adminPrisma,
+      mailer,
+      gateway: new HmacGateway(() => process.env.GATEWAY_WEBHOOK_SECRET ?? ''),
+    }),
     adminAuth,
     panel: createAdminPanel({ db: adminPrisma, adminAuth }),
   };

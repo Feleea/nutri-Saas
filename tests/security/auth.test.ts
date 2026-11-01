@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { seedTenants, TENANT_A } from '../../prisma/seed-data';
 import { forTenant } from '../../src/db/tenant';
-import { createAuthService, TERMS_VERSION } from '../../src/auth/service';
+import { createAuthService, isUnverifiedEmailLoginEnabled, TERMS_VERSION } from '../../src/auth/service';
 import { MemoryMailer } from '../../src/auth/mailer';
 
 const owner = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL_OWNER });
@@ -72,6 +72,26 @@ describe('US-AUT-01 · criar conta e iniciar trial [api][seg]', () => {
   it('sem confirmar o e-mail, o login não entrega sessão', async () => {
     await auth.signup(valid('naoconfirmou@example.test'));
     expect(await auth.login('naoconfirmou@example.test', PASSWORD)).toEqual({ ok: false, reason: 'email_not_verified' });
+  });
+
+  it('só permite pular confirmação em desenvolvimento, nunca em produção', () => {
+    expect(isUnverifiedEmailLoginEnabled({ NODE_ENV: 'development', ALLOW_UNVERIFIED_EMAIL_LOGIN: 'true' })).toBe(true);
+    expect(isUnverifiedEmailLoginEnabled({ NODE_ENV: 'production', ALLOW_UNVERIFIED_EMAIL_LOGIN: 'true' })).toBe(false);
+    expect(isUnverifiedEmailLoginEnabled({ NODE_ENV: 'test', ALLOW_UNVERIFIED_EMAIL_LOGIN: 'true' })).toBe(false);
+    expect(isUnverifiedEmailLoginEnabled({ NODE_ENV: 'development', ALLOW_UNVERIFIED_EMAIL_LOGIN: 'false' })).toBe(false);
+  });
+
+  it('creates a session for an unverified account only while the development bypass is enabled', async () => {
+    const email = 'bypass-verificacao@example.test';
+    const developmentAuth = createAuthService({
+      db,
+      mailer,
+      now: () => new Date(clock),
+      environment: { NODE_ENV: 'development', ALLOW_UNVERIFIED_EMAIL_LOGIN: 'true' },
+    });
+    await developmentAuth.signup(valid(email));
+    const result = await developmentAuth.login(email, PASSWORD);
+    expect(result.ok).toBe(true);
   });
 });
 

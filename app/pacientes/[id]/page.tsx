@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { ctx } from '@/src/server/context';
 import { SESSION_COOKIE } from '@/src/server/web';
 import PatientActions from './PatientActions';
+import PackagesPanel from './PackagesPanel';
+import PortalInvite from './PortalInvite';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +18,10 @@ export default async function Paciente({ params }: { params: Promise<{ id: strin
   if (!r.ok) return <main><p>Paciente não encontrado.</p><Link href="/pacientes">Voltar</Link></main>;
   const p = r.patient;
   const d = (x: Date | null) => (x ? x.toISOString().slice(0, 10) : '—');
+  const mealPlans = p.status === 'ACTIVE' && !r.alerts.includes('consent_missing')
+    && ['TITULAR', 'PROFISSIONAL'].includes(session.role)
+    ? await ctx().mealPlans.list(session, id)
+    : null;
 
   return (
     <main>
@@ -36,6 +42,14 @@ export default async function Paciente({ params }: { params: Promise<{ id: strin
         <p>{p.tags.map((t) => <span key={t} className="badge">{t}</span>)}</p>
         <p className="muted">Cadastro {d(p.createdAt)}. Consentimentos: {r.consents.length ? r.consents.map((c) => `v${c.version} em ${d(c.grantedAt)}${c.revokedAt ? ' (revogado)' : ''}`).join('; ') : 'nenhum'}.</p>
       </div>
+      <PackagesPanel patientId={id} patientActive={p.status === 'ACTIVE'} />
+      {p.status === 'ACTIVE' && !r.alerts.includes('consent_missing')
+        && ['TITULAR', 'PROFISSIONAL'].includes(session.role) && (
+          <PortalInvite
+            patientId={id}
+            plans={mealPlans?.ok ? mealPlans.items.map((plan) => ({ id: plan.id, title: plan.title })) : []}
+          />
+        )}
       <PatientActions id={id} status={p.status} hasConsent={!r.alerts.includes('consent_missing')} />
     </main>
   );

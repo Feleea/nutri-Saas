@@ -12,7 +12,9 @@ import { createNoticeService } from '../notices/service';
 import { createAgendaService, appointmentDataSource } from '../agenda/service';
 import { createClinicalService, anamnesisDataSource } from '../clinical/service';
 import { createMealPlanService, mealPlanDataSource } from '../meal-plans/service';
+import { createAttachmentService, attachmentDataSource } from '../attachments/service';
 import { createFinanceService } from '../finance/service';
+import { createPackagesService } from '../packages/service';
 import { createReminderJob } from '../agenda/reminders';
 import { createAdminPanel } from '../admin/panel';
 import { RateLimiter } from './ratelimit';
@@ -25,6 +27,7 @@ function build() {
   const adminAuth = createAdminAuthService({ db: adminPrisma });
   const patients = createPatientService({ db: prisma, mailer });
   const clinical = createClinicalService({ db: prisma });
+  const attachments = createAttachmentService({ db: prisma });
   return {
     mailer,
     limiter: new RateLimiter(),
@@ -33,7 +36,9 @@ function build() {
     foods: createFoodService({ db: prisma }),
     patients,
     clinical,
+    attachments,
     mealPlans: createMealPlanService({ db: prisma }),
+    packages: createPackagesService({ db: prisma }),
     finance: createFinanceService({ db: prisma }),
     notices: createNoticeService({ db: prisma }),
     agenda: createAgendaService({ db: prisma }),
@@ -41,7 +46,7 @@ function build() {
     // seções clínicas das próximas fases entram em `sources`; limpeza de cópias externas em `hooks`
     lgpd: createLgpdService({
       db: prisma,
-      sources: [consentDataSource, appointmentDataSource, anamnesisDataSource, mealPlanDataSource],
+      sources: [consentDataSource, appointmentDataSource, anamnesisDataSource, mealPlanDataSource, attachmentDataSource],
       hooks: [{ name: 'avisos-de-limite', purge: (_patientId, accountId) => patients.reconcileLimitNotices(accountId) }],
     }),
     // serviços de plataforma: usam o papel admin do banco e só são chamados depois da autorização na rota

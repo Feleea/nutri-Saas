@@ -46,7 +46,9 @@ export function parseLocal(date: string, time: string, tz: string): Date | null 
   const [h, mi] = time.split(':').map(Number);
   const probe = new Date(Date.UTC(y, mo - 1, d));
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return null;
-  return zonedToUtc(y, mo, d, h, mi, tz);
+  const result = zonedToUtc(y, mo, d, h, mi, tz);
+  const local = partsOf(result, tz);
+  return local.y === y && local.mo === mo && local.d === d && local.h === h && local.mi === mi ? result : null;
 }
 
 /** Início (inclusive) e fim (exclusive) do dia local, em UTC. */

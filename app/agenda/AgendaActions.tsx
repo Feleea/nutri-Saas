@@ -14,7 +14,8 @@ export default function AgendaActions({ id, status }: { id: string; status: stri
       if (window.confirm('Já existe outra consulta neste horário. Reagendar mesmo assim?')) return call(path, { ...(body as object), confirmConflict: true });
       return;
     }
-    setMsg('Não foi possível concluir.');
+    setMsg(r.data?.error?.code === 'outside_availability' ? 'Horário fora da disponibilidade configurada.'
+      : r.data?.error?.code === 'block_conflict' ? 'Horário bloqueado na agenda.' : 'Não foi possível concluir.');
   }
 
   return (

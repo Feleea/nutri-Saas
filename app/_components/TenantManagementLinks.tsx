@@ -9,6 +9,7 @@ export default function TenantManagementLinks({ owner }: { owner: boolean }) {
           <Link className="btn secondary" href="/equipe">Equipe</Link>
           <Link className="btn secondary" href="/assinatura">Plano e cobrança</Link>
           <Link className="btn secondary" href="/configuracoes/agenda">Preferências da agenda</Link>
+          <Link className="btn secondary" href="/configuracoes/agenda-disponibilidade">Disponibilidade da agenda</Link>
         </>}
       </p>
     </nav>

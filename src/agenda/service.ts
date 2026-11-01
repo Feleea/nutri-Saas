@@ -3,8 +3,10 @@ import { forTenant, withTenant } from '../db/tenant';
 import type { SessionInfo } from '../auth/service';
 import { accessMode } from '../billing/limits';
 import { normalizeName } from '../foods/normalize';
+import { consumeAppointmentPackage } from '../packages/service';
 import type { PatientDataSource } from '../lgpd/service';
 import { dayBoundsUtc, isValidTimeZone, localParts, parseLocal } from './time';
+import { isWithinAvailability, validateAvailabilityRules, type AvailabilityRule } from './availability';
 
 type Tx = Prisma.TransactionClient;
 
@@ -45,6 +47,8 @@ interface Deps {
   now?: () => Date;
   config?: typeof AGENDA_CONFIG;
 }
+
+export interface AvailabilityRuleInput extends AvailabilityRule {}
 
 /** Só dados de agenda: nada clínico (objetivo, anotações, contato) sai daqui. A secretária pode ver tudo isto. */
 function dto(a: any, tz: string) {
@@ -117,6 +121,25 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
   const audit = (tx: Tx, s: SessionInfo, action: string, id: string) =>
     tx.auditLog.create({ data: { accountId: s.accountId, actorUserId: s.userId, action, resource: 'Appointment', resourceId: id, createdAt: now() } });
 
+  async function checkAppointmentWindow(tx: Tx, accountId: string, professionalUserId: string, startsAt: Date, endsAt: Date, timezone: string) {
+    const dbx = tx as any;
+    const [rules, block] = await Promise.all([
+      dbx.appointmentAvailabilityRule.findMany({ where: { accountId } }),
+      dbx.appointmentBlock.findFirst({
+        where: {
+          accountId, startsAt: { lt: endsAt }, endsAt: { gt: startsAt },
+          OR: [{ professionalUserId: null }, { professionalUserId }],
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (block) return fail('block_conflict');
+    if (rules.length && !isWithinAvailability(startsAt, endsAt, timezone, rules, professionalUserId)) {
+      return fail('outside_availability');
+    }
+    return null;
+  }
+
   // ───────────── US-AGE-01: agendar ─────────────
   async function create(s: SessionInfo, input: CreateInput) {
     if (input.meetingUrl && !/^https:\/\/\S+$/.test(input.meetingUrl)) return fail('validation', { errors: ['meeting_url_invalid'] });
@@ -142,6 +165,8 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
       const m = await tx.membership.findFirst({ where: { userId: professionalId, role: { in: ['TITULAR', 'PROFISSIONAL'] } } });
       if (!m) return fail('validation', { errors: ['professional_invalid'] });
 
+      const windowFailure = await checkAppointmentWindow(tx, s.accountId, professionalId, start, end, account.timezone);
+      if (windowFailure) return windowFailure;
       const conflicts = await findConflicts(tx, professionalId, start, end);
       if (conflicts.length && !input.confirmConflict) return fail('conflict', { needsConfirm: true, conflicts });
 
@@ -175,6 +200,8 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
       if (!(minutes >= config.minMinutes && minutes <= config.maxMinutes)) return fail('validation', { errors: ['duration_invalid'] });
       const end = new Date(start.getTime() + minutes * 60_000);
 
+      const windowFailure = await checkAppointmentWindow(tx, s.accountId, cur.professionalUserId, start, end, account.timezone);
+      if (windowFailure) return windowFailure;
       const conflicts = await findConflicts(tx, cur.professionalUserId, start, end, id);
       if (conflicts.length && !input.confirmConflict) return fail('conflict', { needsConfirm: true, conflicts });
 
@@ -218,6 +245,13 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
       await tx.appointmentHistory.create({ data: { accountId: s.accountId, appointmentId: id, kind: 'STATUS', reason: status, byUserId: s.userId, at: now() } });
       if (status !== 'CONFIRMED') await cancelPendingReminders(tx, id, status === 'COMPLETED' ? 'completed' : 'no_show');
       if (status === 'COMPLETED') {
+        await consumeAppointmentPackage(tx, {
+          accountId: s.accountId,
+          appointmentId: id,
+          patientId: cur.patientId,
+          actorUserId: s.userId,
+          now: now(),
+        });
         const p = await tx.patient.findUnique({ where: { id: cur.patientId } });
         if (p && p.lastActivityAt < cur.startsAt) await tx.patient.update({ where: { id: p.id }, data: { lastActivityAt: cur.startsAt } });
       }
@@ -302,7 +336,115 @@ export function createAgendaService({ db, now = () => new Date(), config = AGEND
     return { ok: true as const, settings: await getSettings(s) };
   }
 
-  return { create, reschedule, cancel, setStatus, list, upcoming, get, searchPatients, getSettings, updateSettings };
+  async function getAvailabilitySettings(s: SessionInfo) {
+    if (s.role !== 'TITULAR') return fail('forbidden');
+    const t = tenant(s) as any;
+    const [rules, blocks, professionals] = await Promise.all([
+      t.appointmentAvailabilityRule.findMany({
+        where: { accountId: s.accountId }, include: { professional: { select: { id: true, name: true } } },
+        orderBy: [{ weekday: 'asc' }, { startMinute: 'asc' }],
+      }),
+      t.appointmentBlock.findMany({
+        where: { accountId: s.accountId, endsAt: { gte: now() } },
+        include: { professional: { select: { id: true, name: true } } },
+        orderBy: { startsAt: 'asc' }, take: 200,
+      }),
+      t.membership.findMany({
+        where: { accountId: s.accountId, role: { in: ['TITULAR', 'PROFISSIONAL'] } },
+        include: { user: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+    return {
+      ok: true as const,
+      rules: rules.map(({ professional, ...rule }: any) => ({ ...rule, professionalName: professional?.name ?? null })),
+      blocks: blocks.map(({ professional, ...block }: any) => ({ ...block, professionalName: professional?.name ?? null })),
+      professionals: professionals.map((m: any) => ({ id: m.user.id, name: m.user.name })),
+    };
+  }
+
+  async function saveAvailabilityRules(s: SessionInfo, input: AvailabilityRuleInput[]) {
+    if (s.role !== 'TITULAR') return fail('forbidden');
+    const errors = validateAvailabilityRules(input);
+    if (errors.length) return fail('validation', { errors });
+    const professionalIds = [...new Set(input.flatMap((rule) => rule.professionalUserId ? [rule.professionalUserId] : []))];
+    return withTenant(s.accountId, async (tx) => {
+      await lock(tx, s.accountId);
+      if (professionalIds.length) {
+        const valid = await tx.membership.findMany({
+          where: { accountId: s.accountId, userId: { in: professionalIds }, role: { in: ['TITULAR', 'PROFISSIONAL'] } },
+          select: { userId: true },
+        });
+        if (valid.length !== professionalIds.length) return fail('validation', { errors: ['professional_invalid'] });
+      }
+      const dbx = tx as any;
+      await dbx.appointmentAvailabilityRule.deleteMany({ where: { accountId: s.accountId } });
+      if (input.length) {
+        await dbx.appointmentAvailabilityRule.createMany({
+          data: input.map((rule) => ({ ...rule, accountId: s.accountId })),
+        });
+      }
+      await audit(tx, s, 'APPOINTMENT_AVAILABILITY_UPDATED', s.accountId);
+      return { ok: true as const };
+    }, db).then(async (r) => r.ok ? getAvailabilitySettings(s) : r);
+  }
+
+  async function createBlock(s: SessionInfo, input: {
+    startsAt: Date; endsAt: Date; professionalUserId?: string | null; reason?: string | null;
+  }) {
+    if (s.role !== 'TITULAR') return fail('forbidden');
+    const reason = input.reason?.trim() || null;
+    const duration = input.endsAt.getTime() - input.startsAt.getTime();
+    if (!Number.isFinite(input.startsAt.getTime()) || !Number.isFinite(input.endsAt.getTime()) ||
+      duration <= 0 || duration > config.maxRangeDays * 86_400_000 ||
+      input.startsAt.getTime() < now().getTime() || (reason && reason.length > 200)) {
+      return fail('validation', { errors: ['block_invalid'] });
+    }
+    const professionalUserId = input.professionalUserId || null;
+    return withTenant(s.accountId, async (tx) => {
+      await lock(tx, s.accountId);
+      if (professionalUserId) {
+        const member = await tx.membership.findFirst({
+          where: { accountId: s.accountId, userId: professionalUserId, role: { in: ['TITULAR', 'PROFISSIONAL'] } },
+          select: { id: true },
+        });
+        if (!member) return fail('validation', { errors: ['professional_invalid'] });
+      }
+      const appointment = await tx.appointment.findFirst({
+        where: {
+          status: { in: ACTIVE }, startsAt: { lt: input.endsAt }, endsAt: { gt: input.startsAt },
+          ...(professionalUserId && { professionalUserId }),
+        },
+        select: { id: true },
+      });
+      if (appointment) return fail('block_conflict');
+      const block = await (tx as any).appointmentBlock.create({
+        data: {
+          accountId: s.accountId, professionalUserId, startsAt: input.startsAt, endsAt: input.endsAt,
+          reason, createdByUserId: s.userId, createdAt: now(),
+        },
+      });
+      await audit(tx, s, 'APPOINTMENT_BLOCK_CREATED', block.id);
+      return { ok: true as const };
+    }, db).then(async (r) => r.ok ? getAvailabilitySettings(s) : r);
+  }
+
+  async function deleteBlock(s: SessionInfo, id: string) {
+    if (s.role !== 'TITULAR') return fail('forbidden');
+    return withTenant(s.accountId, async (tx) => {
+      await lock(tx, s.accountId);
+      const dbx = tx as any;
+      const block = await dbx.appointmentBlock.findFirst({ where: { id, accountId: s.accountId }, select: { id: true } });
+      if (!block) return fail('not_found');
+      await dbx.appointmentBlock.delete({ where: { id } });
+      await audit(tx, s, 'APPOINTMENT_BLOCK_DELETED', id);
+      return { ok: true as const };
+    }, db).then(async (r) => r.ok ? getAvailabilitySettings(s) : r);
+  }
+
+  return {
+    create, reschedule, cancel, setStatus, list, upcoming, get, searchPatients, getSettings, updateSettings,
+    getAvailabilitySettings, saveAvailabilityRules, createBlock, deleteBlock,
+  };
 }
 
 /** As consultas entram na exportação LGPD do paciente (sem dados de outras pessoas). */

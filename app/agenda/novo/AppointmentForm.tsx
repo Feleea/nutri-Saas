@@ -24,7 +24,9 @@ export default function AppointmentForm() {
     const code = r.data?.error?.code;
     if (code === 'conflict') return setConflict(body);
     setError(code === 'in_the_past' ? 'Escolha um horário futuro.' : code === 'access_restricted' ? 'A agenda está somente leitura pela situação da assinatura.'
-      : code === 'professional_required' ? 'Informe o profissional.' : 'Verifique os dados.');
+      : code === 'professional_required' ? 'Informe o profissional.'
+        : code === 'outside_availability' ? 'O horário está fora da disponibilidade configurada.'
+          : code === 'block_conflict' ? 'O horário coincide com um bloqueio da agenda.' : 'Verifique os dados.');
   }
 
   function submit(e: React.FormEvent<HTMLFormElement>) {

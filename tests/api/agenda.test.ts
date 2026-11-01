@@ -14,6 +14,9 @@ import { POST as cancel } from '@/app/api/agenda/[id]/cancel/route';
 import { POST as setStatus } from '@/app/api/agenda/[id]/status/route';
 import { GET as searchAgendaPatients } from '@/app/api/agenda/patients/route';
 import { GET as getSettings, POST as setSettings } from '@/app/api/settings/agenda/route';
+import { GET as getAvailability, POST as setAvailability } from '@/app/api/agenda/availability/route';
+import { GET as getBlocks, POST as createBlock } from '@/app/api/agenda/blocks/route';
+import { DELETE as deleteBlock } from '@/app/api/agenda/blocks/[id]/route';
 import { POST as remindersJob } from '@/app/api/jobs/reminders/route';
 import { POST as dailyJob } from '@/app/api/jobs/daily/route';
 import { call, cookieOf, tokenFrom, mailer } from './helpers';
@@ -135,6 +138,66 @@ describe('API · agenda [e2e][seg]', () => {
     expect(r.json.appointment.local).toMatchObject({ date: '2099-01-01', time: '22:00', timezone: 'Asia/Tokyo' });
     await t.asRole('SECRETARIA');
     expect((await call(setSettings, { cookie: t.cookie, body: { timezone: 'America/Bahia' } })).status).toBe(403);
+  });
+
+  it('configura disponibilidades por profissional, aplica janelas e bloqueios ao agendar e reagendar', async () => {
+    const t = await tenant('avail');
+    const patientId = await t.patient('Disponibilidade');
+    const weekday = 1; // 2099-01-05, segunda-feira, no fuso da conta
+    const rules = [{
+      professionalUserId: null, weekday, startMinute: 540, endMinute: 1020, active: true,
+    }];
+    expect((await call(setAvailability, { cookie: t.cookie, body: { rules } })).status).toBe(200);
+    expect((await call(getAvailability, { method: 'GET', cookie: t.cookie })).json.rules).toHaveLength(1);
+
+    const closed = await call(createAppt, { cookie: t.cookie, body: { patientId, date: '2099-01-05', time: '18:00' } });
+    expect([closed.status, closed.json.error.code]).toEqual([422, 'outside_availability']);
+    const first = await call(createAppt, { cookie: t.cookie, body: { patientId, date: '2099-01-05', time: '10:00' } });
+    expect(first.status).toBe(201);
+    const rescheduleClosed = await call(reschedule, { cookie: t.cookie, params: { id: first.json.appointment.id }, body: { date: '2099-01-05', time: '18:00' } });
+    expect(rescheduleClosed.json.error.code).toBe('outside_availability');
+
+    await owner.user.create({ data: { id: `${t.accountId}_avail_prof`, email: uniq('avail-prof'), passwordHash: 'x', name: 'Profissional Especial' } });
+    await owner.membership.create({ data: { accountId: t.accountId, userId: `${t.accountId}_avail_prof`, role: 'PROFISSIONAL' } });
+    const scoped = [
+      ...rules,
+      { professionalUserId: `${t.accountId}_avail_prof`, weekday, startMinute: 840, endMinute: 900, active: true },
+    ];
+    expect((await call(setAvailability, { cookie: t.cookie, body: { rules: scoped } })).status).toBe(200);
+    const unavailableForProfessional = await call(createAppt, {
+      cookie: t.cookie, body: { patientId, date: '2099-01-05', time: '10:00', professionalUserId: `${t.accountId}_avail_prof` },
+    });
+    expect(unavailableForProfessional.json.error.code).toBe('outside_availability');
+    const availableForProfessional = await call(createAppt, {
+      cookie: t.cookie, body: { patientId, date: '2099-01-05', time: '14:00', professionalUserId: `${t.accountId}_avail_prof` },
+    });
+    expect(availableForProfessional.status).toBe(201);
+
+    const added = await call(createBlock, { cookie: t.cookie, body: {
+      startDate: '2099-01-05', startTime: '12:00', endDate: '2099-01-05', endTime: '13:00', reason: 'Pausa',
+    } });
+    expect(added.status).toBe(200);
+    const blocked = await call(createAppt, { cookie: t.cookie, body: { patientId, date: '2099-01-05', time: '12:00' } });
+    expect([blocked.status, blocked.json.error.code]).toEqual([409, 'block_conflict']);
+    const blockAgainstAppointment = await call(createBlock, { cookie: t.cookie, body: {
+      startDate: '2099-01-05', startTime: '10:30', endDate: '2099-01-05', endTime: '11:30',
+    } });
+    expect(blockAgainstAppointment.json.error.code).toBe('block_conflict');
+    const badBlock = await call(createBlock, { cookie: t.cookie, body: {
+      startDate: '2099-01-05', startTime: '11:00', endDate: '2099-01-05', endTime: '11:00',
+    } });
+    expect(badBlock.status).toBe(422);
+
+    const blocks = await call(getBlocks, { method: 'GET', cookie: t.cookie });
+    expect(blocks.json.blocks).toHaveLength(1);
+    const blockId = blocks.json.blocks[0].id;
+    expect((await call(deleteBlock, { method: 'DELETE', cookie: t.cookie, params: { id: blockId } })).status).toBe(200);
+
+    await t.asRole('SECRETARIA');
+    expect((await call(getAvailability, { method: 'GET', cookie: t.cookie })).status).toBe(403);
+    expect((await call(createBlock, { cookie: t.cookie, body: {
+      startDate: '2099-01-05', startTime: '12:00', endDate: '2099-01-05', endTime: '13:00',
+    } })).status).toBe(403);
   });
 });
 

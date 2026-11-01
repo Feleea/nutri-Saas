@@ -82,7 +82,7 @@ As estimativas abaixo assumem uma equipe pequena (2 a 3 pessoas de desenvolvimen
 
 ### Fase 0 — Fundação (4 a 6 semanas)
 
-> **Situação (24/10/2026):** código e testes escritos para quase todo o escopo; falta validar em ambiente real e cumprir os critérios do gate G0 (seção 15.6).
+> **Situação (31/10/2026):** validação local em PostgreSQL 16 descartável concluída: 355 testes, typecheck, build e restore passaram. O Gate G0 continua pendente de CI remoto, dados e gateway reais, ambientes de staging e revisão jurídica (seção 15.6).
 
 **Autenticação e contas**
 
@@ -110,7 +110,7 @@ As estimativas abaixo assumem uma equipe pequena (2 a 3 pessoas de desenvolvimen
 
 ### Fase 1 — MVP clínico (8 a 12 semanas)
 
-> **Situação (24/10/2026):** em andamento. Pacientes, consentimento LGPD, limites de plano e agenda com lembretes estão implementados. Faltam anamnese e antropometria, plano alimentar, financeiro básico e painel do dono v1.
+> **Situação (31/10/2026):** em andamento. Pacientes, consentimento LGPD, limites de plano, agenda com lembretes e anamnese/antropometria (US-ANA-01 a 03) estão implementados e validados localmente. Faltam plano alimentar, financeiro básico e painel do dono v1.
 
 **1. Pacientes**
 
@@ -317,7 +317,7 @@ Insight: os alertas de uso são a parte mais lucrativa do painel. Um aviso autom
 
 ## 9. Fase 1 — Histórias de usuário e critérios de aceite
 
-> **Situação das histórias:** 🟡 implementada (código e testes automatizados escritos; ainda não executados em ambiente real) · 🔶 parcial (ver seção 15.7) · sem marca = não iniciada. Nenhuma história é considerada aceita antes de os testes rodarem no pipeline.
+> **Situação das histórias:** 🟡 implementada (código e testes automatizados; validação local concluída em 31/10/2026, CI remoto pendente) · 🔶 parcial (ver seção 15.7) · sem marca = não iniciada. Nenhuma história é considerada aceita antes da validação no pipeline e dos critérios externos aplicáveis.
 
 **Convenções**
 
@@ -429,6 +429,8 @@ Como titular, quero que a secretaria gerencie a agenda sem acessar dados clínic
 
 ### 9.3 Anamnese e avaliação
 
+> **US-ANA-01 a 03 — implementadas e validadas localmente (31/10/2026).** Modelos têm versões imutáveis; preenchimentos preservam o snapshot e podem ser retomados/editados com auditoria sem conteúdo clínico; registros exigem consentimento ativo e perfil clínico. Antropometria é normalizada em kg/cm, calcula IMC com uma casa decimal e não classifica sem idade/curva pediátrica. Testes unitários, API/PostgreSQL e RLS passaram; CI remoto e testes de navegador continuam pendentes.
+
 **US-ANA-01 · Criar modelos de anamnese (P1)**
 
 Como nutricionista, quero montar meus próprios formulários, para seguir o meu método de avaliação.
@@ -469,7 +471,7 @@ Como nutricionista, quero registrar composição corporal, para ter uma avaliaç
 
 ### 9.4 Plano alimentar
 
-**US-PLA-01 · Montar plano alimentar (P1)**
+**US-PLA-01 · Montar plano alimentar (P1)** ✅
 
 Como nutricionista, quero montar o plano por refeição, para entregar uma orientação clara ao paciente.
 
@@ -477,7 +479,7 @@ Como nutricionista, quero montar o plano por refeição, para entregar uma orien
 - Dado que altero a quantidade de um alimento, então os totais são recalculados na hora. \[e2e\]
 - Dado que removo um alimento ou refeição, então os totais refletem a remoção. \[e2e\]
 
-**US-PLA-02 · Cálculo nutricional correto (P1)**
+**US-PLA-02 · Cálculo nutricional correto (P1)** ✅
 
 Como nutricionista, quero que os cálculos sejam confiáveis, para que eu possa assinar o plano com segurança.
 
@@ -487,7 +489,7 @@ Como nutricionista, quero que os cálculos sejam confiáveis, para que eu possa 
 - Dado um plano com vários alimentos, então a soma dos totais confere com a soma individual, sem erro de arredondamento acumulado perceptível. \[unit\]
 - Dado um conjunto de planos de referência (golden files), então todos reproduzem os mesmos totais a cada execução do pipeline. \[unit\]
 
-**US-PLA-03 · Escolher tabela de referência (P1)**
+**US-PLA-03 · Escolher tabela de referência (P1)** ✅
 
 Como nutricionista, quero escolher a tabela (por exemplo, TACO ou TBCA), para seguir a referência que adoto.
 
@@ -518,11 +520,13 @@ Como nutricionista, quero exportar o plano em PDF, para entregar ao paciente.
 - Dado a geração do PDF, então ela termina em até 10 segundos para planos de tamanho típico. \[api\]
 - Dado uma alteração de layout no sistema, então o teste visual do PDF acusa diferenças inesperadas. \[e2e\]
 
-**US-PLA-07 · Versionar planos (P1)**
+**US-PLA-07 · Versionar planos (P1)** ✅
 
 Como nutricionista, quero manter o histórico dos planos, para comparar mudanças de conduta.
 
 - Dado um plano já entregue, quando o edito, então uma nova versão é criada e a anterior fica preservada e consultável. \[api\]
+
+**MVP entregue:** edição integral por nova versão, refeições com horário, busca na base existente, quantidade em gramas ou medida cadastrada, fonte/versão congeladas no item e totais por refeição/dia. Nutrientes desconhecidos permanecem sinalizados como “Não informado”. Payloads de versão são cifrados com DEK tenant; API clínica e exportação LGPD autorizada decifram. Backfill de versões legadas é obrigatório no deploy (ver `docs/lgp04-clinical-encryption.md`). A interface de criação/consulta fica na ficha do paciente e só aparece com consentimento ativo para papéis clínicos; exclusão física do paciente remove planos em cascata.
 
 ### 9.5 Financeiro básico
 
@@ -620,7 +624,7 @@ Como dono da plataforma, quero uma contagem diária e confiável, para cobrar de
 
 ## 10. Fase 0 — Histórias de usuário e critérios de aceite
 
-> **Situação das histórias:** 🟡 implementada (código e testes automatizados escritos; ainda não executados em ambiente real) · 🔶 parcial (ver seção 15.7) · sem marca = não iniciada. Nenhuma história é considerada aceita antes de os testes rodarem no pipeline.
+> **Situação das histórias:** 🟡 implementada (código e testes automatizados; validação local concluída em 31/10/2026, CI remoto pendente) · 🔶 parcial (ver seção 15.7) · sem marca = não iniciada. Nenhuma história é considerada aceita antes da validação no pipeline e dos critérios externos aplicáveis.
 
 Mesmas convenções da seção 9 (P1/P2 e tags \[unit\], \[api\], \[e2e\], \[seg\]). Aqui entram também histórias de engenharia, porque a Fase 0 constrói a base que as demais fases usam.
 
@@ -783,11 +787,16 @@ Como dono da plataforma, quero proteger os dados em repouso e em trânsito, para
 - Dado um campo clínico sensível, então ele está cifrado no armazenamento e não aparece em texto aberto em logs ou mensagens de erro. \[seg\]
 - Dado um backup, então ele é restaurado com sucesso em ambiente isolado em teste periódico, e o resultado é registrado. \[api\]
 
-**US-LGP-05 · Auditoria base (P1)** 🔶
+> **Implementação local (31/10/2026):** respostas de anamnese e medidas antropométricas são cifradas com AES-256-GCM, DEK aleatória por tenant, chave embrulhada pela `APP_ENCRYPTION_KEY` e AAD de tenant/registro/tipo. Migration e backfill sem descarte silencioso estão em [`docs/lgp04-clinical-encryption.md`](lgp04-clinical-encryption.md). Permanecem pendentes a exigência/validação de TLS na infraestrutura real e a execução documentada do backfill/restore para cada ambiente antes do piloto.
+
+**US-LGP-05 · Auditoria base (P1)** ✅
+
+> **Concluída:** falhas de login de usuário, MFA e super-admin geram eventos sem identidade/e-mail, senha, token ou segredo; os eventos têm origem IP validada e data, respostas genéricas existentes são mantidas e os papéis de banco só podem chamar a função de inserção restrita. Login bem-sucedido registra a origem. Convite, concessão de papel, revogação de convite e remoção de membro registram ator, papel, origem e data no log append-only do tenant. Não existe fluxo de alteração de papel de super-admin; suspensão e reativação de conta registram o ator e a origem no `AdminAuditLog`. Exportações já eram auditadas.
 
 Como titular, quero o histórico de acessos e alterações, para ter rastreabilidade.
 
-- Dado login, falha de login, alteração de permissão e exportação de dados, então cada evento é gravado com usuário, data e origem, em registro que o usuário não consegue editar. \[api\]
+- Dado login bem-sucedido, alteração de permissão e exportação de dados, então cada evento é gravado com ator, data e origem, em registro que o usuário não consegue editar. \[api\]
+- Dada uma falha de login, então é gravado tipo de evento, data e origem, sem identidade/e-mail, senha, token ou segredo; eventos de contas existentes e inexistentes têm o mesmo esquema e ação genérica. \[api\]\[seg\]
 
 ### 10.5 Painel do dono — versão 0
 
@@ -1920,19 +1929,19 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 
 *Estimativas e gates são referências de planejamento. Ajuste-os com a velocidade real da equipe e com o que você aprender nas entrevistas e no piloto.*
 
-## 15. Andamento da implementação (atualizado em 24/10/2026)
+## 15. Andamento da implementação (atualizado em 31/10/2026)
 
 ### 15.1 Resumo e legenda
 
 | Fase | Escopo | Situação |
 |---|---|---|
-| 0 · Fundação | Contas, 2FA, planos e cobrança, base de alimentos, LGPD, painel do dono v0, esteira de qualidade | Código e testes escritos. **Gate G0 pendente** (seção 15.6) |
-| 1 · MVP clínico | Pacientes, agenda, anamnese, plano alimentar, financeiro, painel v1 | **Parcial:** pacientes, limites do plano, consentimento e agenda feitos. Faltam anamnese, plano alimentar, financeiro e painel v1 |
+| 0 · Fundação | Contas, 2FA, planos e cobrança, base de alimentos, LGPD, painel do dono v0, esteira de qualidade | Validação local concluída; **Gate G0 pendente** (seção 15.6) |
+| 1 · MVP clínico | Pacientes, agenda, anamnese, plano alimentar, financeiro, painel v1 | **Parcial:** pacientes, limites, consentimento, agenda, US-ANA-01 a 03 e US-PLA-01 a 05 implementadas localmente; impressão/PDF básica (US-PLA-06) ainda sem logo e validação visual de navegador; faltam financeiro e painel v1 |
 | 2 · Clínico avançado | Portal do paciente, diário, chat, modelos, suplementos, TMB/GET | Não iniciada |
 | 3 · Produção e qualidade | Fichas técnicas, cardápios, estoque, checklists, NCs, rastreabilidade | Não iniciada |
 | 4 · Diferenciais | Dashboards, auditoria, integrações, IA, app, API, white-label | Não iniciada (existem apenas as rotinas agendadas e a base do painel) |
 
-**O que "implementada" significa aqui:** código e testes automatizados escritos e revisados por leitura. **Nenhum teste foi executado em ambiente real**: o ambiente em que o código foi gerado não tinha Postgres nem o motor do Prisma, e `next build` nunca rodou. Só foi feita uma checagem de sintaxe dos arquivos TypeScript. Por isso as marcas são 🟡 (implementada, não verificada) e 🔶 (parcial), e nenhuma história está "aceita". A primeira tarefa do plano revisado é executar tudo e corrigir o que falhar.
+**Validação local (31/10/2026):** 355 testes passaram em PostgreSQL 16 descartável; `npm run typecheck`, `npx prisma validate`, `npm run build` e o teste de restore também passaram. A execução encontrou e corrigiu a migration inicial incompleta (15 de 30 modelos), a busca de alimentos com pontuação e expectativas incorretas em dois testes. O CI remoto ainda não foi executado; as marcas do gate abaixo não significam aceite de produção.
 
 ### 15.2 O que existe hoje
 
@@ -1942,16 +1951,17 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 | Contas e autenticação | Cadastro com trial de 14 dias, confirmação de e-mail, login com bloqueio por tentativas, sessões no servidor, recuperação de senha, 2FA por TOTP com códigos de recuperação, convite e remoção de equipe, papéis Titular/Profissional/Secretária |
 | Super-admin | Login com senha + TOTP sempre obrigatórios, sessão de 15 minutos de inatividade, cookie separado, tudo auditado |
 | Planos e cobrança | Planos como configuração, checkout, webhook do gateway idempotente com assinatura, upgrade/downgrade com ajuste proporcional, trial vencido, atraso e carência, aviso de mudança de preço |
-| Base de alimentos | Importador CSV idempotente com relatório e conferência, busca sem acento com sinônimos, alimentos próprios com validação de consistência, medidas caseiras. **Testado só com dados sintéticos** |
+| Base de alimentos | Importador CSV idempotente com relatório e conferência, busca sem acento com sinônimos, alimentos próprios, receitas com composição/snapshot por rendimento e medidas caseiras. **Testado só com dados sintéticos** |
 | LGPD | Exportação de paciente cifrada com link que expira, exclusão e anonimização com prazo de guarda configurável, ledger de exclusões para pós-restore, política de retenção e backup (rascunho) |
 | Painel do dono v0 | Lista, filtros e CSV de tenants, detalhe com uso, faturas e linha do tempo, suspender, reativar e estender trial, tudo sem dado clínico |
 | Pacientes | Cadastro enxuto, CPF validado e com alerta de duplicidade, busca e filtros, arquivar/restaurar, edição, consentimento LGPD com alerta |
 | Limites do plano | Contagem ao vivo com trava por tenant, avisos em 80% e 100% (plataforma e e-mail), bloqueio só de novos cadastros, upgrade imediato |
 | Agenda | Fuso por conta, conflito com confirmação, reagendar e cancelar com histórico, lembretes por e-mail com tentativas e sem duplicidade, visão da secretária sem prontuário |
+| Plano alimentar | Montagem por refeição, medidas caseiras, snapshots cifrados por versão, cálculo com ausência explícita, substituições comparadas por energia/macros e impressão/PDF pelo navegador com nome/CRN/contato; logo e testes browser pendentes |
 | Camada web | 51 rotas de API e 13 telas mínimas (login, cadastro, convite, painel, pacientes, agenda, painel do dono); CSRF, limite de requisições, matriz de permissões, cabeçalhos de segurança |
 | Rotinas agendadas | `POST /api/jobs/reminders` e `POST /api/jobs/daily`, autenticadas por segredo. **O agendador (cron) ainda precisa ser configurado** |
 
-**Tamanho atual:** 30 modelos de dados, cerca de 2.800 linhas de código de serviço, 350 de SQL e 3.500 de testes (279 blocos de teste em 22 arquivos).
+**Tamanho atual:** 31 modelos de dados; 355 testes passaram em 29 arquivos de teste.
 
 ### 15.3 Decisões tomadas durante a implementação
 
@@ -1979,6 +1989,8 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 | AUT-01, AUT-02 | `src/auth/service.ts`, `prisma/sql/auth.sql` | `tests/security/auth.test.ts`, `tests/api/auth.test.ts` |
 | AUT-03, AUT-04 | `src/auth/service.ts`, `totp.ts`, `admin.ts`, `src/crypto/secrets.ts` | `tests/security/recovery-2fa.test.ts`, `tests/unit/totp.test.ts`, `tests/api/admin.test.ts` |
 | AUT-05 | `src/team/service.ts` | `tests/security/team.test.ts` |
+| LGP-05 | `src/auth/service.ts`, `src/auth/admin.ts`, `src/team/service.ts`, `prisma/sql/rls.sql` | `tests/api/auth.test.ts`, `tests/api/admin.test.ts`, `tests/security/auth.test.ts`, `tests/security/team.test.ts`, `tests/security/isolation.test.ts` |
+| ANA-01 a 03 | `src/clinical/`, `app/anamnese/`, `app/pacientes/[id]/clinico/`, `prisma/sql/clinical.sql` | `tests/unit/clinical.test.ts`, `tests/api/clinical.test.ts`, `tests/security/clinical.test.ts` |
 | PLN-01 a 04 | `src/billing/` | `tests/security/billing.test.ts`, `tests/unit/limits.test.ts` |
 | ALI-01 a 04 | `src/foods/` | `tests/security/foods.test.ts`, `tests/unit/foods.test.ts` |
 | LGP-02, LGP-03 | `src/lgpd/service.ts` | `tests/security/lgpd.test.ts` |
@@ -1993,11 +2005,11 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 
 | Critério (seção 10.7) | Situação | O que falta |
 |---|---|---|
-| Histórias P1 da Fase 0 aceitas e automatizadas | 🔶 | Executar os testes e corrigir; fechar as histórias parciais (15.7) |
-| Suítes de isolamento e de super-admin no pipeline | 🟡 | Rodar o CI pela primeira vez; hoje o pipeline está escrito mas nunca executou |
+| Histórias P1 da Fase 0 aceitas e automatizadas | 🔶 | Suítes automatizadas passaram localmente; fechar as histórias parciais (15.7) |
+| Suítes de isolamento e de super-admin no pipeline | 🟡 | Isolamento e permissões passaram localmente; falta executar o workflow no CI remoto |
 | Importação de TACO e TBCA validada contra amostra | 🔶 | Obter os arquivos reais, confirmar as condições de uso e definir a amostra de referência. O formato do CSV real pode diferir do que o importador espera |
 | Fluxo cadastro → trial → contratação → cobrança em staging com gateway em teste | 🔶 | Escolher o gateway (Asaas, Iugu ou Pagar.me), escrever o adaptador e a nota fiscal, criar o ambiente de staging |
-| Restore de backup testado e documentado | ⬜ | Executar `scripts/test-restore.sh` e arquivar o relatório |
+| Restore de backup testado e documentado | ✅ local | Restore validado em banco isolado; relatório em [`restore-report-20261031.txt`](restore-report-20261031.txt) |
 | Termos, política e DPA revisados por advogado | ⬜ | Enviar os rascunhos (inclui `docs/politica-retencao-backup.md` e o texto de consentimento do paciente) |
 
 ### 15.7 Histórias parciais e dívidas técnicas
@@ -2006,19 +2018,20 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 - **PLN-02:** gateway real e nota fiscal.
 - **LGP-01:** exigir novo aceite quando a versão dos termos mudar.
 - **LGP-03:** prazo de guarda do prontuário depende de orientação do CFN/CRN (hoje sem trava).
-- **LGP-04:** exigir TLS na infraestrutura, cifrar campos clínicos com chave por tenant, executar o restore.
-- **LGP-05:** auditar falhas de login e mudanças de permissão.
+- **LGP-04:** cifra clínica e chave por tenant implementadas localmente; exigir/verificar TLS de produção e executar/documentar migration, backfill e restore com a chave mestra preservada.
 - **ENG-01:** relatório de cobertura com meta e testes de navegador (Playwright).
 - **ENG-02:** ambientes dev, staging e produção separados.
 - **ENG-03 (não iniciada):** monitoramento de erros e alertas sem dados de pacientes; plano de resposta a incidentes.
 - **AGE-05:** o link da videochamada é informado manualmente; não é gerado.
-- **SEC-03:** leitura de ficha é auditada; listagens e falhas de login ainda não.
+- **PLA-01/02/03/07:** primeira versão local do plano alimentar com cálculo, tabela padrão, histórico e cifra por tenant; falta validação de navegador/CI.
+- **PLA-04/05:** alimentos e receitas próprias, composição com snapshots nutricionais, alternativas no editor e comparação de energia/macros implementadas e testadas localmente.
+- **PLA-06:** página de impressão com identidade profissional cadastrada e geração de PDF pela impressão do navegador; logo e validação visual/e2e ainda pendentes.
 
 **Dívidas técnicas**
 - O papel da aplicação ainda lê a tabela de usuários (identidade global); restringir a funções.
 - Limite de requisições em memória (por instância); trocar por Redis com mais de uma instância.
 - Provedor real de e-mail (hoje só a interface; em produção o app se recusa a iniciar sem provedor).
-- Chave de cifra única da aplicação; o plano prevê chaves por tenant para dados clínicos.
+- `APP_ENCRYPTION_KEY` é a chave mestra que embrulha as chaves de dados por tenant; sua preservação e rotação continuam sendo responsabilidade operacional crítica.
 - CPF guardado só com dígitos, em texto; decidir se entra na cifra de campos sensíveis.
 - Arquivar um paciente não cancela as consultas futuras (o lembrete é pulado, mas a consulta continua).
 - Cancelar no instante exato em que o job envia pode, raramente, deixar sair um lembrete em andamento.
@@ -2026,21 +2039,21 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 
 ### 15.8 Plano revisado: próximos passos
 
-**Passo 0 · Validação técnica (imediato, antes de qualquer código novo)**
-- Subir Postgres, aplicar as migrações e os scripts SQL (`npm run db:setup`), rodar `npm test` e `next build`.
-- Corrigir tudo o que falhar. Critério: pipeline de CI verde, com as suítes de isolamento e de permissões passando.
-- Registrar o tempo gasto: é a primeira medida real de velocidade para recalibrar as estimativas (seção 14).
+**Passo 0 · Validação técnica (concluído localmente em 31/10/2026)**
+- PostgreSQL descartável: 13 migrations aplicadas e scripts SQL configurados; 355 testes, typecheck, validação Prisma e build passaram. Restore foi validado anteriormente.
+- A migration inicial cobria 15 dos 30 modelos; a migration de complemento e a de normalização da busca foram aplicadas.
+- Pendente: executar o workflow de CI remoto e registrar sua evidência/tempo.
 
 **Passo 1 · Fechar o gate G0**
-- Itens da seção 15.6, na ordem: restore, dados reais de TACO/TBCA, escolha do gateway, ambientes (dev, staging, produção), monitoramento, envio dos rascunhos ao advogado.
+- Itens ainda pendentes da seção 15.6: dados reais/licenças TACO/TBCA, escolha do gateway e nota fiscal, ambientes dev/staging/produção, monitoramento e revisão jurídica.
 - Configurar o agendador (cron) para as rotinas de lembretes e diária.
 
 **Passo 2 · Núcleo clínico da Fase 1**
-1. Anamnese e antropometria (US-ANA-01 a 03).
-2. Plano alimentar com cálculo e PDF (US-PLA-01 a 04, 06 e 07), a funcionalidade que mais decide a compra.
+1. Fechar a validação de CI/navegador de anamnese e antropometria (US-ANA-01 a 03); o código e os testes locais já foram concluídos.
+2. Concluir validação em navegador/CI do plano alimentar; adicionar configuração de logo e revisar identidade visual da impressão (US-PLA-06).
 3. Financeiro básico (US-FIN-01).
 4. Importação de pacientes por planilha (US-PAC-06), promovida de P2.
-5. Se o prazo permitir: gráficos de evolução e composição corporal (US-ANA-04 e 05), substituições (US-PLA-05), pacotes e resumo mensal (US-FIN-02 e 03), horários de atendimento (US-AGE-04), anexos (US-PAC-05).
+5. Se o prazo permitir: gráficos de evolução e composição corporal (US-ANA-04 e 05), pacotes e resumo mensal (US-FIN-02 e 03), horários de atendimento (US-AGE-04), anexos (US-PAC-05).
 
 **Passo 3 · Painel do dono v1**
 - Métricas de negócio (MRR, cancelamentos, conversão de trial), gestão de planos e limites pela interface, cobrança dos tenants.
@@ -2062,4 +2075,3 @@ Em vez de atrasar as datas, corte escopo, nesta ordem:
 - **Revisão jurídica ainda não iniciada:** pode travar o lançamento. Mitigação: enviar os rascunhos já no Passo 1.
 
 *Atualize esta seção a cada marco: ao fechar o Passo 0, ao passar o gate G0 e a cada conjunto de histórias aceito.*
-

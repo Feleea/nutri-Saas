@@ -27,6 +27,12 @@ enum PatientStatus {
   ARCHIVED
 }
 
+enum PatientConsultationPackageStatus {
+  ACTIVE
+  COMPLETED
+  CANCELED
+}
+
 enum Module {
   CLINICO
   PRODUCAO
@@ -73,6 +79,12 @@ model Account {
   patientConsents PatientConsent[]
   appointments  Appointment[]
   charges       Charge[]
+  consultationPackages PatientConsultationPackage[]
+  packageSessions PackageSession[]
+  patientAttachments PatientAttachment[]
+  patientPortalSessions PatientPortalSession[]
+  appointmentAvailabilityRules AppointmentAvailabilityRule[]
+  appointmentBlocks AppointmentBlock[]
   appointmentHistory AppointmentHistory[]
   reminders     Reminder[]
   clinicalDataEncryptionKey TenantDataEncryptionKey?
@@ -119,6 +131,10 @@ model User {
   terms       TermsAcceptance[]
   sessions      Session[]
   appointmentsAsProfessional Appointment[] @relation("AppointmentProfessional")
+  availabilityRulesAsProfessional AppointmentAvailabilityRule[] @relation("AvailabilityRuleProfessional")
+  appointmentBlocksAsProfessional AppointmentBlock[] @relation("AppointmentBlockProfessional")
+  appointmentBlocksCreated AppointmentBlock[] @relation("AppointmentBlockCreator")
+  patientAttachmentsCreated PatientAttachment[] @relation("PatientAttachmentCreator")
   mealPlansCreated MealPlan[] @relation("MealPlanCreator")
   mealPlanVersionsCreated MealPlanVersion[] @relation("MealPlanVersionCreator")
   emailTokens   EmailToken[]
@@ -216,6 +232,9 @@ model Patient {
   anamneses AnamnesisRecord[]
   anthropometry AnthropometryRecord[]
   mealPlans MealPlan[]
+  consultationPackages PatientConsultationPackage[]
+  attachments PatientAttachment[]
+  portalSessions PatientPortalSession[]
 
   @@index([accountId, status])
   @@index([accountId, cpf])
@@ -685,6 +704,111 @@ model AnthropometryRecord {
   @@index([accountId, patientId, measuredAt])
 }
 
+model PatientConsultationPackage {
+  id                String                            @id @default(cuid())
+  accountId         String
+  patientId         String
+  name              String
+  totalSessions     Int
+  remainingSessions Int
+  amountCents       Int
+  status            PatientConsultationPackageStatus  @default(ACTIVE)
+  purchasedAt       DateTime                          @default(now())
+  createdAt         DateTime                          @default(now())
+
+  account  Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient  Patient         @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+  sessions PackageSession[]
+
+  @@unique([id, accountId])
+  @@index([accountId, patientId, status])
+  @@index([accountId, purchasedAt])
+}
+
+model PackageSession {
+  id            String   @id @default(cuid())
+  accountId     String
+  packageId     String
+  appointmentId String   @unique
+  usedAt        DateTime @default(now())
+
+  account     Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  package     PatientConsultationPackage @relation(fields: [packageId, accountId], references: [id, accountId], onDelete: Cascade)
+  appointment Appointment               @relation(fields: [appointmentId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  @@index([accountId, packageId, usedAt])
+}
+
+model AppointmentAvailabilityRule {
+  id                 String   @id @default(cuid())
+  accountId          String
+  professionalUserId String?
+  weekday            Int
+  startMinute        Int
+  endMinute          Int
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  account      Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  professional User?   @relation("AvailabilityRuleProfessional", fields: [professionalUserId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, weekday, active])
+  @@index([accountId, professionalUserId, weekday, active])
+}
+
+model AppointmentBlock {
+  id                 String   @id @default(cuid())
+  accountId          String
+  professionalUserId String?
+  startsAt           DateTime
+  endsAt             DateTime
+  reason             String?
+  createdByUserId    String
+  createdAt          DateTime @default(now())
+
+  account      Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  professional User?   @relation("AppointmentBlockProfessional", fields: [professionalUserId], references: [id], onDelete: Cascade)
+  createdBy    User    @relation("AppointmentBlockCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, startsAt, endsAt])
+  @@index([accountId, professionalUserId, startsAt])
+}
+
+model PatientAttachment {
+  id                String   @id @default(cuid())
+  accountId         String
+  patientId         String
+  fileName          String
+  mimeType          String
+  sizeBytes         BigInt
+  encryptedPayload  String   @db.Text
+  createdByUserId   String
+  createdAt         DateTime @default(now())
+
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient   Patient @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+  createdBy User    @relation("PatientAttachmentCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, patientId, createdAt])
+}
+
+model PatientPortalSession {
+  id         String    @id @default(cuid())
+  accountId  String
+  patientId  String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  patient Patient @relation(fields: [patientId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  @@index([accountId, patientId, expiresAt])
+  @@index([accountId, expiresAt])
+}
+
 // Avisos dentro da plataforma (ex.: 80% do limite de pacientes). Um por tipo enquanto a condição persistir.
 model Notice {
   id        String    @id @default(cuid())
@@ -738,7 +862,9 @@ model Appointment {
   history      AppointmentHistory[]
   reminders    Reminder[]
   charges      Charge[]
+  packageSessions PackageSession[]
 
+  @@unique([id, accountId])
   @@index([accountId, startsAt])
   @@index([patientId])
   @@index([professionalUserId, startsAt])

@@ -7,7 +7,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "prisma migrate dev",
-    "db:rls": "prisma db execute --file prisma/sql/rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/auth.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/billing.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/foods-lgpd.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/patients.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/agenda.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/clinical.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/finance.sql --schema prisma/schema.prisma",
+    "db:rls": "prisma db execute --file prisma/sql/rls.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/auth.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/billing.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/foods-lgpd.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/patients.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/agenda.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/clinical.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/finance.sql --schema prisma/schema.prisma && prisma db execute --file prisma/sql/next-mvp.sql --schema prisma/schema.prisma",
     "db:setup": "prisma migrate deploy && npm run db:rls",
     "db:reset": "prisma migrate reset --force --skip-seed && npm run db:rls && npm run db:seed",
     "db:seed": "tsx prisma/seed.ts",

@@ -10,7 +10,7 @@ function masterKey(): Buffer {
   return key;
 }
 
-function aad(label: string, accountId: string, recordId: string, kind: ClinicalDataKind): Buffer {
+function aad(label: string, accountId: string, recordId: string, kind: string): Buffer {
   return Buffer.from(JSON.stringify(['suasnutri', label, 'v1', accountId, recordId, kind]), 'utf8');
 }
 
@@ -82,4 +82,40 @@ export function decryptClinicalData<T>(
     dataKey,
     aad('clinical-data', accountId, recordId, kind),
   ).toString('utf8')) as T;
+}
+
+export function encryptAttachmentData(
+  accountId: string,
+  attachmentId: string,
+  bytes: Buffer,
+  dataKey: Buffer,
+): string {
+  if (dataKey.length !== 32) throw new Error('chave de dados inválida');
+  const payload = JSON.stringify({ version: 1, bytes: bytes.toString('base64') });
+  return seal(
+    Buffer.from(payload, 'utf8'),
+    dataKey,
+    aad('patient-attachment', accountId, attachmentId, 'BINARY'),
+  );
+}
+
+export function decryptAttachmentData(
+  accountId: string,
+  attachmentId: string,
+  ciphertext: string,
+  dataKey: Buffer,
+): Buffer {
+  if (dataKey.length !== 32) throw new Error('chave de dados inválida');
+  const payload = JSON.parse(open(
+    ciphertext,
+    dataKey,
+    aad('patient-attachment', accountId, attachmentId, 'BINARY'),
+  ).toString('utf8')) as { version?: unknown; bytes?: unknown };
+  if (payload.version !== 1 || typeof payload.bytes !== 'string'
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload.bytes)) {
+    throw new Error('payload de anexo inválido');
+  }
+  const bytes = Buffer.from(payload.bytes, 'base64');
+  if (bytes.toString('base64') !== payload.bytes) throw new Error('payload de anexo inválido');
+  return bytes;
 }
